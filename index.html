@@ -68,6 +68,89 @@
             transition: opacity 2s ease;
         }
 
+        /* Time-of-day menu */
+        #time-menu-btn {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            padding: 10px 24px;
+            font-size: 13px;
+            font-family: inherit;
+            letter-spacing: 2px;
+            color: rgba(255, 255, 255, 0.8);
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 24px;
+            cursor: pointer;
+            backdrop-filter: blur(6px);
+            transition: background 0.3s, transform 0.2s;
+        }
+        #time-menu-btn:hover {
+            background: rgba(0, 0, 0, 0.55);
+            transform: translateX(-50%) scale(1.04);
+        }
+        #time-menu-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            z-index: 25;
+            background: rgba(10, 12, 20, 0.85);
+            backdrop-filter: blur(12px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 28px 24px 36px;
+            transform: translateY(100%);
+            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        #time-menu-panel.open {
+            transform: translateY(0);
+        }
+        #time-menu-panel h3 {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 12px;
+            font-weight: 400;
+            letter-spacing: 3px;
+            margin-bottom: 20px;
+        }
+        .time-options {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+        .time-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
+            border-radius: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            transition: border-color 0.25s, background 0.25s;
+            font-family: inherit;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .time-option:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .time-option.active {
+            border-color: rgba(255, 255, 255, 0.5);
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+        }
+        .time-option .time-icon {
+            font-size: 28px;
+            line-height: 1;
+        }
+        .time-option .time-label {
+            font-size: 11px;
+            letter-spacing: 2px;
+        }
+
         /* Title screen */
         #title-screen {
             position: fixed;
@@ -129,6 +212,26 @@
         <div id="distance-display">0 m</div>
     </div>
     <div id="controls-hint" style="display:none;">A / D or ← → to steer &nbsp;&nbsp;|&nbsp;&nbsp; SPACE to jump</div>
+
+    <!-- Time-of-day menu -->
+    <button id="time-menu-btn" style="display:none;">TIME OF DAY</button>
+    <div id="time-menu-panel">
+        <h3>TIME OF DAY</h3>
+        <div class="time-options">
+            <button class="time-option active" data-time="morning">
+                <span class="time-icon">&#9788;</span>
+                <span class="time-label">MORNING</span>
+            </button>
+            <button class="time-option" data-time="midday">
+                <span class="time-icon">&#9728;</span>
+                <span class="time-label">MIDDAY</span>
+            </button>
+            <button class="time-option" data-time="sunset">
+                <span class="time-icon">&#9730;</span>
+                <span class="time-label">SUNSET</span>
+            </button>
+        </div>
+    </div>
 
     <!-- Three.js and noise library from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
