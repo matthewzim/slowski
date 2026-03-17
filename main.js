@@ -149,6 +149,157 @@ const CONFIG = {
 };
 
 // ---------------------------------------------------------------------------
+// 2b. TIME-OF-DAY PRESETS
+// ---------------------------------------------------------------------------
+
+const TIME_PRESETS = {
+    morning: {
+        skyColor: 0xc8dff5,
+        fogColor: 0xd6e8f5,
+        sunColor: 0xfff5e0,
+        sunIntensity: 1.0,
+        ambientSkyColor: 0xc8dff5,
+        ambientGroundColor: 0x8fa4b8,
+        ambientIntensity: 0.6,
+        sunDirection: new THREE.Vector3(0.5, 0.8, -0.3).normalize(),
+        exposure: 1.1,
+    },
+    midday: {
+        skyColor: 0x87ceeb,
+        fogColor: 0xa8d8ea,
+        sunColor: 0xffffff,
+        sunIntensity: 1.3,
+        ambientSkyColor: 0x9dd5f0,
+        ambientGroundColor: 0xa0b8c8,
+        ambientIntensity: 0.75,
+        sunDirection: new THREE.Vector3(0.1, 1.0, -0.1).normalize(),
+        exposure: 1.2,
+    },
+    sunset: {
+        skyColor: 0x2d1b4e,
+        fogColor: 0x4a2545,
+        sunColor: 0xff6030,
+        sunIntensity: 0.8,
+        ambientSkyColor: 0x4a3060,
+        ambientGroundColor: 0x3a2040,
+        ambientIntensity: 0.4,
+        sunDirection: new THREE.Vector3(-0.8, 0.15, -0.3).normalize(),
+        exposure: 0.85,
+    },
+};
+
+let currentTimePreset = 'morning';
+let timeTransition = { active: false, from: {}, to: {}, progress: 0 };
+
+function lerpColor(a, b, t) {
+    const ca = new THREE.Color(a);
+    const cb = new THREE.Color(b);
+    return ca.lerp(cb, t);
+}
+
+function applyTimePreset(presetName, animate) {
+    const preset = TIME_PRESETS[presetName];
+    if (!preset) return;
+    currentTimePreset = presetName;
+
+    if (!scene) return;
+
+    if (animate) {
+        // Capture current values for smooth transition
+        const sun = findSunLight();
+        const ambient = findAmbientLight();
+        timeTransition = {
+            active: true,
+            from: {
+                skyColor: scene.background.clone(),
+                fogColor: scene.fog.color.clone(),
+                sunColor: sun ? sun.color.clone() : new THREE.Color(0xffffff),
+                sunIntensity: sun ? sun.intensity : 1.0,
+                ambientSkyColor: ambient ? ambient.color.clone() : new THREE.Color(0xffffff),
+                ambientGroundColor: ambient ? ambient.groundColor.clone() : new THREE.Color(0x888888),
+                ambientIntensity: ambient ? ambient.intensity : 0.6,
+                sunDirection: sun ? sun.position.clone().normalize() : new THREE.Vector3(0, 1, 0),
+                exposure: renderer.toneMappingExposure,
+            },
+            to: preset,
+            progress: 0,
+        };
+    } else {
+        applyPresetImmediate(preset);
+    }
+}
+
+function applyPresetImmediate(preset) {
+    scene.background = new THREE.Color(preset.skyColor);
+    scene.fog.color.set(preset.fogColor);
+    renderer.toneMappingExposure = preset.exposure;
+
+    scene.traverse((obj) => {
+        if (obj.isDirectionalLight && obj.userData.isSun) {
+            obj.color.set(preset.sunColor);
+            obj.intensity = preset.sunIntensity;
+        }
+        if (obj.isHemisphereLight) {
+            obj.color.set(preset.ambientSkyColor);
+            obj.groundColor.set(preset.ambientGroundColor);
+            obj.intensity = preset.ambientIntensity;
+        }
+    });
+
+    CONFIG.sunDirection.copy(preset.sunDirection);
+}
+
+function findSunLight() {
+    let sun = null;
+    scene.traverse((obj) => {
+        if (obj.isDirectionalLight && obj.userData.isSun) sun = obj;
+    });
+    return sun;
+}
+
+function findAmbientLight() {
+    let ambient = null;
+    scene.traverse((obj) => {
+        if (obj.isHemisphereLight) ambient = obj;
+    });
+    return ambient;
+}
+
+function updateTimeTransition(dt) {
+    if (!timeTransition.active) return;
+
+    timeTransition.progress += dt * 1.5; // ~0.67s transition
+    const t = Math.min(timeTransition.progress, 1);
+    const ease = t * t * (3 - 2 * t); // smoothstep
+
+    const from = timeTransition.from;
+    const to = timeTransition.to;
+
+    scene.background.copy(lerpColor(from.skyColor, to.skyColor, ease));
+    scene.fog.color.copy(lerpColor(from.fogColor, to.fogColor, ease));
+    renderer.toneMappingExposure = from.exposure + (to.exposure - from.exposure) * ease;
+
+    const sun = findSunLight();
+    if (sun) {
+        sun.color.copy(lerpColor(from.sunColor, to.sunColor, ease));
+        sun.intensity = from.sunIntensity + (to.sunIntensity - from.sunIntensity) * ease;
+    }
+
+    const ambient = findAmbientLight();
+    if (ambient) {
+        ambient.color.copy(lerpColor(from.ambientSkyColor, to.ambientSkyColor, ease));
+        ambient.groundColor.copy(lerpColor(from.ambientGroundColor, to.ambientGroundColor, ease));
+        ambient.intensity = from.ambientIntensity + (to.ambientIntensity - from.ambientIntensity) * ease;
+    }
+
+    CONFIG.sunDirection.copy(from.sunDirection).lerp(to.sunDirection, ease).normalize();
+
+    if (t >= 1) {
+        timeTransition.active = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 3. GLOBAL STATE
 // ---------------------------------------------------------------------------
 
@@ -1034,6 +1185,7 @@ function animate() {
     updateCamera(dt);
     updateSunlight();
     updateSnowParticles(dt);
+    updateTimeTransition(dt);
     updateHUD();
 
     renderer.render(scene, camera);
@@ -1050,6 +1202,7 @@ function startGame() {
     document.getElementById('title-screen').classList.add('hidden');
     document.getElementById('hud').style.display = 'block';
     document.getElementById('controls-hint').style.display = 'block';
+    document.getElementById('time-menu-btn').style.display = 'block';
 
     // Fade out controls hint after 5 seconds
     setTimeout(() => {
@@ -1086,6 +1239,33 @@ function init() {
         }
     };
     window.addEventListener('keydown', startOnKey);
+
+    // Time-of-day menu
+    const timeMenuBtn = document.getElementById('time-menu-btn');
+    const timeMenuPanel = document.getElementById('time-menu-panel');
+
+    timeMenuBtn.addEventListener('click', () => {
+        timeMenuPanel.classList.toggle('open');
+    });
+
+    document.querySelectorAll('.time-option').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const time = btn.dataset.time;
+            if (time === currentTimePreset) return;
+            document.querySelectorAll('.time-option').forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            applyTimePreset(time, true);
+            // Close panel after selection
+            setTimeout(() => timeMenuPanel.classList.remove('open'), 300);
+        });
+    });
+
+    // Close panel when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!timeMenuPanel.contains(e.target) && e.target !== timeMenuBtn) {
+            timeMenuPanel.classList.remove('open');
+        }
+    });
 
     // Start render loop
     animate();
