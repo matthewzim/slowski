@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slowski — Infinite Downhill Skiing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* HUD overlay */
+        #hud {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #speed-display {
+            position: absolute;
+            top: 24px;
+            right: 32px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 28px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        #speed-display span {
+            font-size: 14px;
+            opacity: 0.6;
+            letter-spacing: 1px;
+        }
+        #distance-display {
+            position: absolute;
+            top: 60px;
+            right: 32px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 16px;
+            font-weight: 300;
+            letter-spacing: 1px;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        /* Controls hint */
+        #controls-hint {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 13px;
+            letter-spacing: 1px;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            pointer-events: none;
+            transition: opacity 2s ease;
+        }
+
+        /* Title screen */
+        #title-screen {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            background: linear-gradient(180deg, #87CEEB 0%, #E8F0FE 40%, #FFFFFF 100%);
+            transition: opacity 1s ease;
+        }
+        #title-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #title-screen h1 {
+            font-size: 72px;
+            font-weight: 200;
+            color: #2c3e50;
+            letter-spacing: 12px;
+            margin-bottom: 16px;
+        }
+        #title-screen p {
+            font-size: 16px;
+            color: #5a7a9a;
+            letter-spacing: 3px;
+            margin-bottom: 48px;
+        }
+        #start-btn {
+            padding: 14px 48px;
+            font-size: 16px;
+            letter-spacing: 3px;
+            color: #fff;
+            background: rgba(44, 62, 80, 0.8);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 40px;
+            cursor: pointer;
+            pointer-events: all;
+            transition: background 0.3s, transform 0.2s;
+        }
+        #start-btn:hover {
+            background: rgba(44, 62, 80, 1);
+            transform: scale(1.04);
+        }
+    </style>
+</head>
+<body>
+    <!-- Title screen -->
+    <div id="title-screen">
+        <h1>SLOWSKI</h1>
+        <p>INFINITE DOWNHILL SKIING</p>
+        <button id="start-btn">START SKIING</button>
+    </div>
+
+    <!-- In-game HUD -->
+    <div id="hud" style="display:none;">
+        <div id="speed-display">0 <span>KM/H</span></div>
+        <div id="distance-display">0 m</div>
+    </div>
+    <div id="controls-hint" style="display:none;">A / D or ← → to steer &nbsp;&nbsp;|&nbsp;&nbsp; SPACE to jump</div>
+
+    <!-- Three.js and noise library from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/simplex-noise@3.0.1/dist/cjs/simplex-noise.js" onerror="
+        // Fallback: define our own simplex noise if CDN fails
+        window.simplexFallback = true;
+    "></script>
+    <script src="main.js"></script>
+</body>
+</html>
