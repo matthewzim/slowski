@@ -502,9 +502,7 @@ function createPlayer() {
     player = new THREE.Group();
 
     // Body (capsule-like)
-    const bodyGeo = new THREE.CapsuleGeometry
-        ? new THREE.CylinderBufferGeometry(0.3, 0.25, 1.2, 8)
-        : new THREE.CylinderBufferGeometry(0.3, 0.25, 1.2, 8);
+    const bodyGeo = new THREE.CylinderBufferGeometry(0.3, 0.25, 1.2, 8);
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0xcc2233, roughness: 0.5 });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.y = 1.0;
