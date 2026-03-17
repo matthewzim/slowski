@@ -97,23 +97,25 @@ const SimplexNoise2D = (() => {
 // ---------------------------------------------------------------------------
 
 const CONFIG = {
-    // Terrain
+    // Terrain — steeper slope, reduced noise so it's always downhill
     chunkSize: 60,
-    chunkSegments: 60,
-    slope: 0.18,
+    chunkSegments: 90,
+    slope: 0.35,
     noiseScale: 0.012,
-    noiseAmplitude: 8,
+    noiseAmplitude: 3.0,
     detailNoiseScale: 0.06,
-    detailNoiseAmplitude: 1.5,
+    detailNoiseAmplitude: 0.8,
+    microNoiseScale: 0.25,
+    microNoiseAmplitude: 0.15,
     chunksAhead: 4,
     chunksBehind: 1,
     chunksLeft: 2,
     chunksRight: 2,
 
     // Player
-    initialSpeed: 18,
-    maxSpeed: 55,
-    acceleration: 0.8,
+    initialSpeed: 20,
+    maxSpeed: 60,
+    acceleration: 1.0,
     turnSpeed: 2.2,
     turnDamping: 0.92,
     steerReturnSpeed: 4.0,
@@ -128,13 +130,13 @@ const CONFIG = {
     cameraShakeIntensity: 0.12,
 
     // Trees
-    treesPerChunk: 14,
+    treesPerChunk: 18,
     treeMinDistance: 4,
     treeClearRadius: 5,
 
     // Snow particles
-    snowParticleCount: 800,
-    snowAreaSize: 80,
+    snowParticleCount: 1500,
+    snowAreaSize: 90,
     snowFallSpeed: 8,
 
     // Visuals
@@ -242,10 +244,24 @@ function getTerrainHeight(x, z) {
     const base = -z * CONFIG.slope;
     const n1 = noise.noise2D(x * CONFIG.noiseScale, z * CONFIG.noiseScale) * CONFIG.noiseAmplitude;
     const n2 = noise.noise2D(x * CONFIG.detailNoiseScale, z * CONFIG.detailNoiseScale) * CONFIG.detailNoiseAmplitude;
+    // Micro-detail noise for snow texture bumps
+    const n3 = noise.noise2D(x * CONFIG.microNoiseScale, z * CONFIG.microNoiseScale) * CONFIG.microNoiseAmplitude;
     // Gentle lateral valley shape — higher at the edges
     const lateralDist = Math.abs(x) * 0.003;
     const valley = lateralDist * lateralDist * 2;
-    return base + n1 + n2 + valley;
+
+    const raw = base + n1 + n2 + n3 + valley;
+
+    // Clamp so terrain never goes uphill — ensure the derivative along Z stays downhill.
+    // We do this by ensuring noise never exceeds the base slope contribution.
+    // The base drops by slope per unit Z. We allow noise to reduce the drop but never reverse it.
+    // Effectively: cap total noise contribution so it doesn't exceed base slope locally.
+    const maxUphillNoise = Math.abs(z) * CONFIG.slope * 0.4;
+    const noiseContrib = n1 + n2 + n3;
+    if (noiseContrib > maxUphillNoise) {
+        return base + maxUphillNoise + valley;
+    }
+    return raw;
 }
 
 /**
@@ -262,11 +278,11 @@ function getTerrainNormal(x, z) {
     return normal;
 }
 
-// Snow material with subtle vertex color variation
+// Snow material with subtle vertex color variation — more textured
 const snowMaterial = new THREE.MeshStandardMaterial({
     color: CONFIG.snowColor,
-    roughness: 0.85,
-    metalness: 0.02,
+    roughness: 0.78,
+    metalness: 0.05,
     flatShading: false,
     vertexColors: true,
 });
@@ -309,14 +325,19 @@ function createChunk(cx, cz) {
             normals[idx + 1] = n.y;
             normals[idx + 2] = n.z;
 
-            // Snow color with subtle variation based on height and slope
+            // Rich snow color with multiple noise layers for texture
             const steepness = 1.0 - n.y;
-            const colorNoise = noise.noise2D(wx * 0.05, wz * 0.05) * 0.03;
-            const shade = 0.92 + colorNoise - steepness * 0.15;
-            // Slightly blue in shadows / steep areas
-            colors[idx] = shade * 0.94;
+            const colorNoise1 = noise.noise2D(wx * 0.05, wz * 0.05) * 0.03;
+            const colorNoise2 = noise.noise2D(wx * 0.15, wz * 0.15) * 0.02;
+            const colorNoise3 = noise.noise2D(wx * 0.6, wz * 0.6) * 0.015;
+            // Sparkle effect — bright spots at fine frequency
+            const sparkle = Math.max(0, noise.noise2D(wx * 2.0, wz * 2.0) - 0.6) * 0.15;
+            const shade = 0.90 + colorNoise1 + colorNoise2 + colorNoise3 + sparkle - steepness * 0.2;
+            // Bluer in shadows/steep areas, warmer on lit slopes
+            const warmth = Math.max(0, n.y - 0.7) * 0.04;
+            colors[idx] = shade * 0.93 + warmth;
             colors[idx + 1] = shade * 0.96;
-            colors[idx + 2] = shade;
+            colors[idx + 2] = shade * 1.01;
         }
     }
 
@@ -409,17 +430,27 @@ function updateChunks() {
 // 6. TREE SYSTEM
 // ---------------------------------------------------------------------------
 
-// Shared geometries and materials for trees
-const trunkGeometry = new THREE.CylinderBufferGeometry(0.2, 0.3, 2.5, 6);
-const foliageGeometry = new THREE.ConeBufferGeometry(1.8, 5, 7);
-const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5a3a1a, roughness: 0.9 });
+// Shared geometries and materials for trees — higher detail
+const trunkGeometry = new THREE.CylinderBufferGeometry(0.18, 0.32, 2.8, 10);
+const foliageGeometryLarge = new THREE.ConeBufferGeometry(2.2, 4.0, 12);
+const foliageGeometryMed = new THREE.ConeBufferGeometry(1.7, 3.2, 12);
+const foliageGeometrySmall = new THREE.ConeBufferGeometry(1.2, 2.5, 10);
+const foliageGeometryTip = new THREE.ConeBufferGeometry(0.7, 1.8, 8);
+const snowCapGeometryLarge = new THREE.ConeBufferGeometry(2.3, 0.6, 12);
+const snowCapGeometryMed = new THREE.ConeBufferGeometry(1.8, 0.5, 12);
+const snowCapGeometrySmall = new THREE.ConeBufferGeometry(1.3, 0.4, 10);
+const snowCapGeometryTip = new THREE.ConeBufferGeometry(0.75, 0.35, 8);
+
+const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a2e12, roughness: 0.95 });
 const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x2d5a27, roughness: 0.8 });
+const snowCapMaterial = new THREE.MeshStandardMaterial({ color: 0xeef4f8, roughness: 0.7, metalness: 0.05 });
 
 // Darker/lighter foliage variants for visual variety
 const foliageMaterials = [
     foliageMaterial,
     new THREE.MeshStandardMaterial({ color: 0x1e4a1e, roughness: 0.85 }),
     new THREE.MeshStandardMaterial({ color: 0x3a6b30, roughness: 0.75 }),
+    new THREE.MeshStandardMaterial({ color: 0x264f20, roughness: 0.82 }),
 ];
 
 /**
@@ -458,29 +489,69 @@ function spawnTrees(cx, cz) {
         const group = new THREE.Group();
         group.position.set(wx, h, wz);
 
-        // Trunk
+        // Slight random rotation for variety
+        group.rotation.y = rng() * Math.PI * 2;
+
+        // Trunk with slight taper
         const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-        trunk.position.y = 1.25 * scale;
-        trunk.scale.setScalar(scale);
+        trunk.position.y = 1.4 * scale;
+        trunk.scale.set(scale, scale, scale);
         trunk.castShadow = true;
         group.add(trunk);
 
-        // Foliage
         const mat = foliageMaterials[Math.floor(rng() * foliageMaterials.length)];
-        const foliage = new THREE.Mesh(foliageGeometry, mat);
-        foliage.position.y = 4.0 * scale;
-        foliage.scale.set(scale, scale * (0.8 + rng() * 0.4), scale);
-        foliage.castShadow = true;
-        group.add(foliage);
 
-        // Optional second foliage layer for fullness
-        if (rng() > 0.4) {
-            const foliage2 = new THREE.Mesh(foliageGeometry, mat);
-            foliage2.position.y = 5.8 * scale;
-            foliage2.scale.set(scale * 0.65, scale * 0.7, scale * 0.65);
-            foliage2.castShadow = true;
-            group.add(foliage2);
-        }
+        // Bottom foliage tier (widest)
+        const f1 = new THREE.Mesh(foliageGeometryLarge, mat);
+        f1.position.y = 3.2 * scale;
+        f1.scale.set(scale, scale * (0.85 + rng() * 0.3), scale);
+        f1.castShadow = true;
+        group.add(f1);
+
+        // Snow cap on bottom tier
+        const sc1 = new THREE.Mesh(snowCapGeometryLarge, snowCapMaterial);
+        sc1.position.y = (3.2 + 2.0) * scale;
+        sc1.scale.set(scale, scale, scale);
+        group.add(sc1);
+
+        // Middle foliage tier
+        const f2 = new THREE.Mesh(foliageGeometryMed, mat);
+        f2.position.y = 5.0 * scale;
+        f2.scale.set(scale * 0.85, scale * (0.8 + rng() * 0.3), scale * 0.85);
+        f2.castShadow = true;
+        group.add(f2);
+
+        // Snow cap on middle tier
+        const sc2 = new THREE.Mesh(snowCapGeometryMed, snowCapMaterial);
+        sc2.position.y = (5.0 + 1.6) * scale;
+        sc2.scale.set(scale * 0.85, scale, scale * 0.85);
+        group.add(sc2);
+
+        // Upper foliage tier
+        const f3 = new THREE.Mesh(foliageGeometrySmall, mat);
+        f3.position.y = 6.5 * scale;
+        f3.scale.set(scale * 0.7, scale * (0.75 + rng() * 0.3), scale * 0.7);
+        f3.castShadow = true;
+        group.add(f3);
+
+        // Snow cap on upper tier
+        const sc3 = new THREE.Mesh(snowCapGeometrySmall, snowCapMaterial);
+        sc3.position.y = (6.5 + 1.25) * scale;
+        sc3.scale.set(scale * 0.7, scale, scale * 0.7);
+        group.add(sc3);
+
+        // Tip
+        const f4 = new THREE.Mesh(foliageGeometryTip, mat);
+        f4.position.y = 7.8 * scale;
+        f4.scale.set(scale * 0.5, scale * (0.7 + rng() * 0.3), scale * 0.5);
+        f4.castShadow = true;
+        group.add(f4);
+
+        // Snow cap on tip
+        const sc4 = new THREE.Mesh(snowCapGeometryTip, snowCapMaterial);
+        sc4.position.y = (7.8 + 0.9) * scale;
+        sc4.scale.set(scale * 0.5, scale, scale * 0.5);
+        group.add(sc4);
 
         // Store world position for collision detection
         group.userData.worldX = wx;
@@ -501,31 +572,168 @@ function spawnTrees(cx, cz) {
 function createPlayer() {
     player = new THREE.Group();
 
-    // Body (capsule-like)
-    const bodyGeo = new THREE.CylinderBufferGeometry(0.3, 0.25, 1.2, 8);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xcc2233, roughness: 0.5 });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    body.position.y = 1.0;
+    // --- Legs (two cylinders) ---
+    const legGeo = new THREE.CylinderBufferGeometry(0.1, 0.12, 0.7, 8);
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.7 });
+    const legL = new THREE.Mesh(legGeo, pantsMat);
+    legL.position.set(-0.15, 0.5, 0);
+    legL.castShadow = true;
+    player.add(legL);
+    const legR = new THREE.Mesh(legGeo, pantsMat);
+    legR.position.set(0.15, 0.5, 0);
+    legR.castShadow = true;
+    player.add(legR);
+
+    // --- Boots ---
+    const bootGeo = new THREE.BoxBufferGeometry(0.16, 0.12, 0.28);
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
+    const bootL = new THREE.Mesh(bootGeo, bootMat);
+    bootL.position.set(-0.15, 0.12, 0.02);
+    player.add(bootL);
+    const bootR = new THREE.Mesh(bootGeo, bootMat);
+    bootR.position.set(0.15, 0.12, 0.02);
+    player.add(bootR);
+
+    // --- Body / Jacket (tapered cylinder) ---
+    const bodyGeo = new THREE.CylinderBufferGeometry(0.28, 0.22, 1.0, 10);
+    const jacketMat = new THREE.MeshStandardMaterial({ color: 0xcc2233, roughness: 0.45 });
+    const body = new THREE.Mesh(bodyGeo, jacketMat);
+    body.position.y = 1.15;
     body.castShadow = true;
     player.add(body);
 
-    // Head
-    const headGeo = new THREE.SphereBufferGeometry(0.25, 8, 8);
+    // Jacket collar
+    const collarGeo = new THREE.CylinderBufferGeometry(0.29, 0.28, 0.1, 10);
+    const collarMat = new THREE.MeshStandardMaterial({ color: 0xaa1a28, roughness: 0.5 });
+    const collar = new THREE.Mesh(collarGeo, collarMat);
+    collar.position.y = 1.65;
+    player.add(collar);
+
+    // --- Arms ---
+    const armGeo = new THREE.CylinderBufferGeometry(0.07, 0.06, 0.75, 8);
+    const armL = new THREE.Mesh(armGeo, jacketMat);
+    armL.position.set(-0.38, 1.2, 0.05);
+    armL.rotation.z = 0.3;
+    armL.rotation.x = -0.2;
+    armL.castShadow = true;
+    player.add(armL);
+    const armR = new THREE.Mesh(armGeo, jacketMat);
+    armR.position.set(0.38, 1.2, 0.05);
+    armR.rotation.z = -0.3;
+    armR.rotation.x = -0.2;
+    armR.castShadow = true;
+    player.add(armR);
+
+    // --- Gloves ---
+    const gloveGeo = new THREE.SphereBufferGeometry(0.07, 6, 6);
+    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+    const gloveL = new THREE.Mesh(gloveGeo, gloveMat);
+    gloveL.position.set(-0.48, 0.85, 0.12);
+    player.add(gloveL);
+    const gloveR = new THREE.Mesh(gloveGeo, gloveMat);
+    gloveR.position.set(0.48, 0.85, 0.12);
+    player.add(gloveR);
+
+    // --- Ski Poles ---
+    const poleGeo = new THREE.CylinderBufferGeometry(0.015, 0.015, 1.6, 6);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.7 });
+    const poleL = new THREE.Mesh(poleGeo, poleMat);
+    poleL.position.set(-0.48, 0.45, 0.12);
+    poleL.rotation.x = -0.15;
+    player.add(poleL);
+    const poleR = new THREE.Mesh(poleGeo, poleMat);
+    poleR.position.set(0.48, 0.45, 0.12);
+    poleR.rotation.x = -0.15;
+    player.add(poleR);
+
+    // Pole baskets (small discs)
+    const basketGeo = new THREE.CylinderBufferGeometry(0.06, 0.06, 0.01, 8);
+    const basketL = new THREE.Mesh(basketGeo, poleMat);
+    basketL.position.set(-0.48, -0.15, 0.2);
+    player.add(basketL);
+    const basketR = new THREE.Mesh(basketGeo, poleMat);
+    basketR.position.set(0.48, -0.15, 0.2);
+    player.add(basketR);
+
+    // --- Head ---
+    const headGeo = new THREE.SphereBufferGeometry(0.22, 12, 12);
     const headMat = new THREE.MeshStandardMaterial({ color: 0xf5d0a9, roughness: 0.6 });
     const head = new THREE.Mesh(headGeo, headMat);
-    head.position.y = 1.85;
+    head.position.y = 1.88;
     head.castShadow = true;
     player.add(head);
 
-    // Skis (two thin boxes)
-    const skiGeo = new THREE.BoxBufferGeometry(0.12, 0.05, 2.0);
-    const skiMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, roughness: 0.3, metalness: 0.5 });
+    // --- Beanie / Hat ---
+    const hatGeo = new THREE.SphereBufferGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    const hatMat = new THREE.MeshStandardMaterial({ color: 0x2255aa, roughness: 0.6 });
+    const hat = new THREE.Mesh(hatGeo, hatMat);
+    hat.position.y = 1.92;
+    player.add(hat);
+
+    // Hat pom-pom
+    const pomGeo = new THREE.SphereBufferGeometry(0.06, 6, 6);
+    const pom = new THREE.Mesh(pomGeo, hatMat);
+    pom.position.y = 2.16;
+    player.add(pom);
+
+    // --- Goggles ---
+    const goggleGeo = new THREE.TorusBufferGeometry(0.1, 0.025, 6, 12);
+    const goggleMat = new THREE.MeshStandardMaterial({ color: 0xff8800, roughness: 0.2, metalness: 0.3 });
+    const goggleL = new THREE.Mesh(goggleGeo, goggleMat);
+    goggleL.position.set(-0.08, 1.9, -0.19);
+    goggleL.rotation.y = Math.PI / 2;
+    player.add(goggleL);
+    const goggleR = new THREE.Mesh(goggleGeo, goggleMat);
+    goggleR.position.set(0.08, 1.9, -0.19);
+    goggleR.rotation.y = Math.PI / 2;
+    player.add(goggleR);
+
+    // Goggle bridge
+    const bridgeGeo = new THREE.BoxBufferGeometry(0.04, 0.03, 0.04);
+    const bridge = new THREE.Mesh(bridgeGeo, goggleMat);
+    bridge.position.set(0, 1.9, -0.19);
+    player.add(bridge);
+
+    // Goggle lenses (dark)
+    const lensGeo = new THREE.CircleBufferGeometry(0.08, 10);
+    const lensMat = new THREE.MeshStandardMaterial({ color: 0x112233, roughness: 0.1, metalness: 0.5 });
+    const lensL = new THREE.Mesh(lensGeo, lensMat);
+    lensL.position.set(-0.08, 1.9, -0.215);
+    player.add(lensL);
+    const lensR = new THREE.Mesh(lensGeo, lensMat);
+    lensR.position.set(0.08, 1.9, -0.215);
+    player.add(lensR);
+
+    // --- Skis (longer, more detailed) ---
+    const skiGeo = new THREE.BoxBufferGeometry(0.12, 0.04, 2.2);
+    const skiMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, roughness: 0.25, metalness: 0.5 });
     const skiL = new THREE.Mesh(skiGeo, skiMat);
-    skiL.position.set(-0.22, 0.03, -0.2);
+    skiL.position.set(-0.22, 0.02, -0.2);
     player.add(skiL);
     const skiR = new THREE.Mesh(skiGeo, skiMat);
-    skiR.position.set(0.22, 0.03, -0.2);
+    skiR.position.set(0.22, 0.02, -0.2);
     player.add(skiR);
+
+    // Ski tip curves (small wedges at front)
+    const tipGeo = new THREE.BoxBufferGeometry(0.12, 0.02, 0.15);
+    const tipL = new THREE.Mesh(tipGeo, skiMat);
+    tipL.position.set(-0.22, 0.06, -1.28);
+    tipL.rotation.x = -0.4;
+    player.add(tipL);
+    const tipR = new THREE.Mesh(tipGeo, skiMat);
+    tipR.position.set(0.22, 0.06, -1.28);
+    tipR.rotation.x = -0.4;
+    player.add(tipR);
+
+    // Ski bindings
+    const bindGeo = new THREE.BoxBufferGeometry(0.10, 0.06, 0.12);
+    const bindMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5 });
+    const bindL = new THREE.Mesh(bindGeo, bindMat);
+    bindL.position.set(-0.22, 0.07, 0.0);
+    player.add(bindL);
+    const bindR = new THREE.Mesh(bindGeo, bindMat);
+    bindR.position.set(0.22, 0.07, 0.0);
+    player.add(bindR);
 
     player.position.copy(playerState.position);
     scene.add(player);
@@ -539,22 +747,26 @@ function createSnowParticles() {
     const count = CONFIG.snowParticleCount;
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
     const area = CONFIG.snowAreaSize;
 
     for (let i = 0; i < count; i++) {
         positions[i * 3] = (Math.random() - 0.5) * area;
         positions[i * 3 + 1] = Math.random() * 40;
         positions[i * 3 + 2] = (Math.random() - 0.5) * area;
+        sizes[i] = 0.08 + Math.random() * 0.18;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     const material = new THREE.PointsMaterial({
         color: 0xffffff,
-        size: 0.15,
+        size: 0.18,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.7,
         depthWrite: false,
+        sizeAttenuation: true,
     });
 
     snowParticles = new THREE.Points(geometry, material);
@@ -568,12 +780,18 @@ function updateSnowParticles(dt) {
     const area = CONFIG.snowAreaSize;
     const px = playerState.position.x;
     const pz = playerState.position.z;
+    const time = performance.now() * 0.001;
 
     for (let i = 0; i < CONFIG.snowParticleCount; i++) {
         const idx = i * 3;
-        positions[idx + 1] -= CONFIG.snowFallSpeed * dt;
-        // Subtle drift
-        positions[idx] += Math.sin(positions[idx + 1] * 0.5 + i) * 0.02;
+        // Varied fall speed per particle for depth
+        const fallMult = 0.7 + (i % 7) * 0.08;
+        positions[idx + 1] -= CONFIG.snowFallSpeed * fallMult * dt;
+
+        // More complex drift — swirling motion
+        const phase = i * 0.37 + time * 0.5;
+        positions[idx] += Math.sin(positions[idx + 1] * 0.5 + phase) * 0.025;
+        positions[idx + 2] += Math.cos(positions[idx + 1] * 0.3 + phase * 0.7) * 0.015;
 
         // Reset particle if below ground or too far
         if (positions[idx + 1] < -5) {
