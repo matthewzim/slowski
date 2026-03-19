@@ -100,13 +100,13 @@ const CONFIG = {
     // Terrain — steeper slope, reduced noise so it's always downhill
     chunkSize: 60,
     chunkSegments: 90,
-    slope: 0.35,
+    slope: 0.72,
     noiseScale: 0.012,
-    noiseAmplitude: 3.0,
+    noiseAmplitude: 1.8,
     detailNoiseScale: 0.06,
-    detailNoiseAmplitude: 0.8,
+    detailNoiseAmplitude: 0.45,
     microNoiseScale: 0.25,
-    microNoiseAmplitude: 0.15,
+    microNoiseAmplitude: 0.1,
     chunksAhead: 4,
     chunksBehind: 1,
     chunksLeft: 2,
@@ -130,9 +130,11 @@ const CONFIG = {
     cameraShakeIntensity: 0.12,
 
     // Trees
-    treesPerChunk: 18,
+    treeClumsPerChunk: 3,
+    treesPerClump: 7,
+    treeClumpRadius: 14,
     treeMinDistance: 4,
-    treeClearRadius: 5,
+    treeClearRadius: 6,
 
     // Snow particles
     snowParticleCount: 1500,
@@ -401,18 +403,15 @@ function getTerrainHeight(x, z) {
     const lateralDist = Math.abs(x) * 0.003;
     const valley = lateralDist * lateralDist * 2;
 
-    const raw = base + n1 + n2 + n3 + valley;
-
-    // Clamp so terrain never goes uphill — ensure the derivative along Z stays downhill.
-    // We do this by ensuring noise never exceeds the base slope contribution.
-    // The base drops by slope per unit Z. We allow noise to reduce the drop but never reverse it.
-    // Effectively: cap total noise contribution so it doesn't exceed base slope locally.
-    const maxUphillNoise = Math.abs(z) * CONFIG.slope * 0.4;
+    // Guarantee no uphill sections: compare against height one unit uphill (z-1).
+    // The base slope already drops slope units per Z. We cap how much positive noise
+    // can push the surface back up. Max allowed positive noise = slope * noiseWavelength * 0.25,
+    // ensuring bumps never reverse the overall downhill direction.
     const noiseContrib = n1 + n2 + n3;
-    if (noiseContrib > maxUphillNoise) {
-        return base + maxUphillNoise + valley;
-    }
-    return raw;
+    const maxPositiveNoise = CONFIG.slope / CONFIG.noiseScale * 0.18;
+    const clampedNoise = Math.min(noiseContrib, maxPositiveNoise);
+
+    return base + clampedNoise + valley;
 }
 
 /**
@@ -616,7 +615,8 @@ function seededRandom(seed) {
 }
 
 /**
- * Spawn trees in a chunk. Returns array of tree group objects.
+ * Spawn trees in a chunk using clump-based placement for realistic ski-run gaps.
+ * Returns array of tree group objects.
  */
 function spawnTrees(cx, cz) {
     const trees = [];
@@ -625,16 +625,36 @@ function spawnTrees(cx, cz) {
     const offsetZ = cz * size;
     const rng = seededRandom(cx * 73856093 ^ cz * 19349663);
 
-    for (let i = 0; i < CONFIG.treesPerChunk; i++) {
-        const lx = (rng() - 0.5) * size;
-        const lz = (rng() - 0.5) * size;
-        const wx = offsetX + lx;
-        const wz = offsetZ + lz;
+    // Generate clump centers — 2 to 4 per chunk, biased toward the edges of the run
+    const numClumps = 2 + Math.floor(rng() * (CONFIG.treeClumsPerChunk - 1));
+    const clumps = [];
+    for (let c = 0; c < numClumps; c++) {
+        // Bias clumps toward lateral edges (|x| > 10) so the centre stays clear
+        const side = rng() < 0.5 ? -1 : 1;
+        const lateralBias = 10 + rng() * (size * 0.5 - 10);
+        const clumpX = offsetX + side * lateralBias;
+        const clumpZ = offsetZ + (rng() - 0.5) * size * 0.85;
+        const clumpRadius = CONFIG.treeClumpRadius * (0.6 + rng() * 0.8);
+        const clumpCount = Math.round(CONFIG.treesPerClump * (0.5 + rng() * 1.0));
+        clumps.push({ x: clumpX, z: clumpZ, radius: clumpRadius, count: clumpCount });
+    }
 
-        // Skip if too close to center path (player spawn corridor)
-        if (Math.abs(wx) < CONFIG.treeClearRadius && cz >= -1 && cz <= 1) continue;
+    for (const clump of clumps) {
+        for (let i = 0; i < clump.count; i++) {
+            // Polar placement biased toward clump centre (rng()*rng() gives inner-heavy distribution)
+            const angle = rng() * Math.PI * 2;
+            const dist = rng() * rng() * clump.radius;
+            const wx = clump.x + Math.cos(angle) * dist;
+            const wz = clump.z + Math.sin(angle) * dist;
 
-        const h = getTerrainHeight(wx, wz);
+            // Keep trees within chunk bounds (with margin)
+            const margin = size * 0.5;
+            if (Math.abs(wx - offsetX) > margin || Math.abs(wz - offsetZ) > margin) continue;
+
+            // Skip if too close to centre path (player spawn corridor)
+            if (Math.abs(wx) < CONFIG.treeClearRadius && cz >= -1 && cz <= 1) continue;
+
+            const h = getTerrainHeight(wx, wz);
         const scale = 0.7 + rng() * 0.6;
 
         const group = new THREE.Group();
@@ -711,7 +731,8 @@ function spawnTrees(cx, cz) {
 
         scene.add(group);
         trees.push(group);
-    }
+        } // end inner tree loop
+    } // end clump loop
 
     return trees;
 }
@@ -1097,22 +1118,21 @@ function updateCamera(dt) {
     const state = playerState;
     const lerpFactor = 1 - Math.exp(-CONFIG.cameraLerpSpeed * dt);
 
-    // Desired camera position: behind and above player
-    const behindX = Math.sin(state.turnAngle) * CONFIG.cameraOffset.z;
-    const behindZ = Math.cos(state.turnAngle) * CONFIG.cameraOffset.z;
-
+    // Camera stays world-aligned — always behind the player in the Z axis (uphill).
+    // Only the X position drifts gently to follow the player's lateral movement.
+    // This prevents the whole scene from orbiting when the player turns.
     const desiredPos = new THREE.Vector3(
-        state.position.x + behindX,
+        state.position.x + Math.sin(state.turnAngle) * 2.5, // slight lean into turn
         state.position.y + CONFIG.cameraOffset.y,
-        state.position.z + behindZ
+        state.position.z + CONFIG.cameraOffset.z            // always uphill of player
     );
 
-    // Smooth follow
     cameraState.currentPosition.lerp(desiredPos, lerpFactor);
 
-    // Look at point ahead of player
-    const lookAheadX = state.position.x - Math.sin(state.turnAngle) * CONFIG.cameraLookAhead;
-    const lookAheadZ = state.position.z - Math.cos(state.turnAngle) * CONFIG.cameraLookAhead;
+    // Look-at: straight down the hill (negative Z), with a gentle lateral hint
+    // toward the player's heading. The world horizon stays fixed as the player turns.
+    const lookAheadX = state.position.x - Math.sin(state.turnAngle) * CONFIG.cameraLookAhead * 0.4;
+    const lookAheadZ = state.position.z - CONFIG.cameraLookAhead;
     const desiredLookAt = new THREE.Vector3(
         lookAheadX,
         state.position.y + 1.5,
@@ -1132,8 +1152,8 @@ function updateCamera(dt) {
     camera.position.copy(cameraState.currentPosition).add(cameraState.shake);
     camera.lookAt(cameraState.currentLookAt);
 
-    // Subtle camera roll during turns
-    camera.rotation.z += state.currentSteer * CONFIG.cameraTiltAmount;
+    // Subtle camera roll during turns (halved to reduce world-spinning feel)
+    camera.rotation.z += state.currentSteer * CONFIG.cameraTiltAmount * 0.5;
 }
 
 // ---------------------------------------------------------------------------
