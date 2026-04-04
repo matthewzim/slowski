@@ -40,8 +40,41 @@
       border-radius: 50%; overflow: hidden;
       border: 2px solid rgba(255,255,255,0.5);
       background: rgba(0,0,0,0.3);
+      cursor: pointer;
+      transition: opacity 0.2s;
     }
+    #minimap:hover { border-color: rgba(255,255,255,0.9); }
     #minimap canvas { width: 100%; height: 100%; }
+    #terrain-map-overlay {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(0,0,0,0.7);
+      display: none; align-items: center; justify-content: center;
+      cursor: default;
+    }
+    #terrain-map-overlay.open { display: flex; }
+    #terrain-map-container {
+      position: relative;
+      background: rgba(20,30,50,0.95);
+      border-radius: 12px; padding: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    #terrain-map-container h2 {
+      color: #fff; font-size: 16px; margin-bottom: 10px;
+      text-align: center; font-weight: 500;
+    }
+    #terrain-map-container .close-btn {
+      position: absolute; top: 8px; right: 12px;
+      color: #aaa; font-size: 22px; cursor: pointer;
+      background: none; border: none; line-height: 1;
+    }
+    #terrain-map-container .close-btn:hover { color: #fff; }
+    #terrain-map-canvas { cursor: crosshair; border-radius: 4px; }
+    #terrain-map-tooltip {
+      position: absolute; pointer-events: none;
+      background: rgba(0,0,0,0.8); color: #fff;
+      padding: 4px 10px; border-radius: 4px; font-size: 12px;
+      display: none; white-space: nowrap;
+    }
     #loading {
       position: fixed; inset: 0; z-index: 100;
       display: flex; align-items: center; justify-content: center;
@@ -64,7 +97,15 @@
     <div class="elevation" id="elev-display">Elev: 0m</div>
   </div>
   <div id="minimap"><canvas id="minimap-canvas" width="160" height="160"></canvas></div>
-  <div id="controls-info">Arrow Keys / WASD to steer &bull; Space to brake &bull; R to reset</div>
+  <div id="terrain-map-overlay">
+    <div id="terrain-map-container">
+      <h2>Blackcomb Mountain - Trail Map</h2>
+      <button class="close-btn" id="terrain-map-close">&times;</button>
+      <canvas id="terrain-map-canvas" width="600" height="600"></canvas>
+      <div id="terrain-map-tooltip"></div>
+    </div>
+  </div>
+  <div id="controls-info">Arrow Keys / WASD to steer &bull; Space to brake &bull; R to reset &bull; M or click minimap for trail map</div>
 
   <script type="importmap">
   {

@@ -191,17 +191,29 @@ export class Player {
 
     // -- Ground collision --
     const groundY = getHeightAt(this.position.x, this.position.z, this.heightmap, this.resolution);
+    const heightAboveGround = this.position.y - groundY;
 
-    if (this.position.y <= groundY) {
+    if (heightAboveGround <= 0) {
+      // Below or at ground - snap up
       this.position.y = groundY;
       this.onGround = true;
-
-      // Remove downward velocity component relative to terrain
       if (this.velocity.y < 0) {
         this.velocity.y = 0;
       }
+    } else if (this.onGround && heightAboveGround < 2.0) {
+      // Was on ground and still close - stay grounded (prevents floating on slopes)
+      this.position.y = groundY;
+      this.onGround = true;
+      // Project velocity onto terrain surface so Y doesn't accumulate
+      const projDot = this.velocity.dot(terrainNormal);
+      if (projDot < 0) {
+        this.velocity.sub(terrainNormal.clone().multiplyScalar(projDot));
+      }
     } else {
+      // Genuinely airborne
       this.onGround = false;
+      // Apply freefall gravity when airborne
+      this.velocity.y -= PLAYER_CONFIG.gravity * deltaTime;
     }
 
     // -- World bounds --
