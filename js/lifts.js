@@ -10,7 +10,7 @@ import { normalizedToWorld, getHeightAt, TERRAIN_CONFIG } from './terrain.js';
 
 // -- Lift definitions --
 // Each lift is defined by start/end in normalized coords, plus metadata
-const LIFT_DEFS = [
+export const LIFT_DEFS = [
   {
     name: 'Excalibur Gondola',
     points: [[0.06, 0.14], [0.12, 0.20], [0.18, 0.28], [0.24, 0.34]],
@@ -62,22 +62,22 @@ const LIFT_DEFS = [
   },
 ];
 
-// -- Tower geometry (reusable) --
-function createTowerGeometry() {
+// -- Tower geometry (dynamic height) --
+function createTowerGeometry(height = 12) {
   const group = new THREE.Group();
 
-  // Main pole
-  const poleGeo = new THREE.CylinderGeometry(0.3, 0.4, 12, 6);
+  // Main pole - scales to reach cable
+  const poleGeo = new THREE.CylinderGeometry(0.3, 0.4, height, 6);
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.7, roughness: 0.3 });
   const pole = new THREE.Mesh(poleGeo, poleMat);
-  pole.position.y = 6;
+  pole.position.y = height / 2;
   pole.castShadow = true;
   group.add(pole);
 
-  // Cross arm
+  // Cross arm at top
   const armGeo = new THREE.BoxGeometry(4, 0.3, 0.3);
   const arm = new THREE.Mesh(armGeo, poleMat);
-  arm.position.y = 12;
+  arm.position.y = height;
   arm.castShadow = true;
   group.add(arm);
 
@@ -87,12 +87,12 @@ function createTowerGeometry() {
 
   const sheaveL = new THREE.Mesh(sheaveGeo, sheaveMat);
   sheaveL.rotation.z = Math.PI / 2;
-  sheaveL.position.set(-1.8, 12.2, 0);
+  sheaveL.position.set(-1.8, height + 0.2, 0);
   group.add(sheaveL);
 
   const sheaveR = new THREE.Mesh(sheaveGeo, sheaveMat);
   sheaveR.rotation.z = Math.PI / 2;
-  sheaveR.position.set(1.8, 12.2, 0);
+  sheaveR.position.set(1.8, height + 0.2, 0);
   group.add(sheaveR);
 
   return group;
@@ -157,16 +157,43 @@ function buildLift(def, heightmap, resolution) {
   const group = new THREE.Group();
   group.name = def.name;
 
-  // Convert points to world space with terrain height
-  const worldPoints = def.points.map(([nx, ny]) => {
+  // Convert waypoints to world space
+  const rawWorldPoints = def.points.map(([nx, ny]) => {
     const { x, z } = normalizedToWorld(nx, ny);
-    const y = getHeightAt(x, z, heightmap, resolution);
-    return new THREE.Vector3(x, y + def.cableHeight, z);
+    return { x, z };
   });
 
-  // Create smooth curve through points
-  const curve = new THREE.CatmullRomCurve3(worldPoints, false, 'catmullrom', 0.3);
+  // Create a dense set of cable points that follow the terrain properly.
+  // Interpolate between waypoints and ensure cable stays above terrain.
+  const densePoints = [];
+  const segmentsPerLeg = 20;
+
+  for (let i = 0; i < rawWorldPoints.length - 1; i++) {
+    const p0 = rawWorldPoints[i];
+    const p1 = rawWorldPoints[i + 1];
+    for (let s = 0; s <= (i === rawWorldPoints.length - 2 ? segmentsPerLeg : segmentsPerLeg - 1); s++) {
+      const t = s / segmentsPerLeg;
+      const x = p0.x + (p1.x - p0.x) * t;
+      const z = p0.z + (p1.z - p0.z) * t;
+      const terrainY = getHeightAt(x, z, heightmap, resolution);
+      densePoints.push(new THREE.Vector3(x, terrainY + def.cableHeight, z));
+    }
+  }
+
+  // Create smooth curve through dense terrain-following points
+  const curve = new THREE.CatmullRomCurve3(densePoints, false, 'catmullrom', 0.3);
   const curvePoints = curve.getPoints(200);
+
+  // Enforce minimum clearance on all curve points
+  for (const pt of curvePoints) {
+    const terrainY = getHeightAt(pt.x, pt.z, heightmap, resolution);
+    if (pt.y < terrainY + def.cableHeight * 0.7) {
+      pt.y = terrainY + def.cableHeight * 0.7;
+    }
+  }
+
+  // Rebuild curve from corrected points for accurate tower/chair placement
+  const correctedCurve = new THREE.CatmullRomCurve3(curvePoints, false, 'catmullrom', 0.1);
 
   // Cable line
   const cableGeo = new THREE.BufferGeometry().setFromPoints(curvePoints);
@@ -183,20 +210,24 @@ function buildLift(def, heightmap, resolution) {
   const returnLine = new THREE.Line(returnGeo, cableMat);
   group.add(returnLine);
 
-  // Place towers
-  const totalLength = curve.getLength();
+  // Place towers with dynamic height to reach the cable
+  const totalLength = correctedCurve.getLength();
   const numTowers = Math.floor(totalLength / def.towerSpacing);
 
   for (let i = 0; i <= numTowers; i++) {
     const t = i / numTowers;
-    const pos = curve.getPointAt(t);
-    const terrainY = getHeightAt(pos.x, pos.z, heightmap, resolution);
+    const cablePos = correctedCurve.getPointAt(t);
+    const terrainY = getHeightAt(cablePos.x, cablePos.z, heightmap, resolution);
+    const towerHeight = cablePos.y - terrainY;
 
-    const tower = createTowerGeometry();
-    tower.position.set(pos.x, terrainY, pos.z);
+    // Only place tower if it would be reasonably tall
+    if (towerHeight < 2) continue;
+
+    const tower = createTowerGeometry(towerHeight);
+    tower.position.set(cablePos.x, terrainY, cablePos.z);
 
     // Orient tower to face along the cable
-    const tangent = curve.getTangentAt(t);
+    const tangent = correctedCurve.getTangentAt(t);
     const angle = Math.atan2(tangent.x, tangent.z);
     tower.rotation.y = angle;
 
@@ -219,10 +250,12 @@ function buildLift(def, heightmap, resolution) {
   return {
     group,
     chairs,
-    curve,
+    curve: correctedCurve,
     speed: def.type === 'gondola' ? 4.5 : 3.5, // m/s
     totalLength,
     type: def.type,
+    name: def.name,
+    topPoint: densePoints[densePoints.length - 1].clone(), // Top station position
   };
 }
 

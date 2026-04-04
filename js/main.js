@@ -13,9 +13,10 @@ import {
   TERRAIN_CONFIG,
   generateHeightmapFromImage,
   imageToWorld,
+  normalizedToWorld,
 } from './terrain.js';
 import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSprayParticles, updateSprayParticles } from './snow.js';
-import { generateLiftSystem, updateLifts } from './lifts.js';
+import { generateLiftSystem, updateLifts, LIFT_DEFS } from './lifts.js';
 import { generateTrees } from './trees.js';
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
@@ -108,6 +109,173 @@ function drawMinimap(playerX, playerZ, playerHeading) {
   ctx.beginPath();
   ctx.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2);
   ctx.stroke();
+}
+
+// -- Terrain Map (expanded minimap) --
+let terrainMapDrawn = false;
+let liftTopPositions = []; // { name, worldX, worldZ, canvasX, canvasY }
+
+function drawTerrainMap() {
+  const canvas = document.getElementById('terrain-map-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const halfWorld = TERRAIN_CONFIG.worldWidth / 2;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Draw terrain elevation
+  const step = 4;
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const worldX = (x / w - 0.5) * TERRAIN_CONFIG.worldWidth;
+      const worldZ = (y / h - 0.5) * TERRAIN_CONFIG.worldDepth;
+      const elev = getHeightAt(worldX, worldZ, heightmap, resolution);
+      const run = isOnRun(worldX, worldZ);
+
+      if (run) {
+        const b = Math.floor(140 + (elev / 1800) * 80);
+        ctx.fillStyle = `rgb(${b - 10}, ${b + 10}, ${b + 40})`;
+      } else {
+        const b = Math.floor(60 + (elev / 1800) * 130);
+        ctx.fillStyle = `rgb(${b - 15}, ${b + 15}, ${b - 5})`;
+      }
+      ctx.fillRect(x, y, step, step);
+    }
+  }
+
+  // Draw lift lines
+  liftTopPositions = [];
+  for (const def of LIFT_DEFS) {
+    ctx.strokeStyle = 'rgba(220, 50, 50, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < def.points.length; i++) {
+      const cx = def.points[i][0] * w;
+      const cy = def.points[i][1] * h;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+
+    // Mark top station (last point) with a clickable circle
+    const topPt = def.points[def.points.length - 1];
+    const topCx = topPt[0] * w;
+    const topCy = topPt[1] * h;
+    const { x: topWorldX, z: topWorldZ } = normalizedToWorld(topPt[0], topPt[1]);
+
+    liftTopPositions.push({
+      name: def.name,
+      worldX: topWorldX,
+      worldZ: topWorldZ,
+      canvasX: topCx,
+      canvasY: topCy,
+    });
+
+    // Draw top station marker
+    ctx.fillStyle = 'rgba(255, 80, 80, 0.9)';
+    ctx.beginPath();
+    ctx.arc(topCx, topCy, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Draw bottom station marker (smaller)
+    const botPt = def.points[0];
+    ctx.fillStyle = 'rgba(200, 200, 200, 0.6)';
+    ctx.beginPath();
+    ctx.arc(botPt[0] * w, botPt[1] * h, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw player position
+  if (player) {
+    const px = (player.position.x / TERRAIN_CONFIG.worldWidth + 0.5) * w;
+    const pz = (player.position.z / TERRAIN_CONFIG.worldDepth + 0.5) * h;
+    ctx.fillStyle = '#00ff66';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, pz, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  terrainMapDrawn = true;
+}
+
+function setupTerrainMap() {
+  const minimap = document.getElementById('minimap');
+  const overlay = document.getElementById('terrain-map-overlay');
+  const closeBtn = document.getElementById('terrain-map-close');
+  const mapCanvas = document.getElementById('terrain-map-canvas');
+  const tooltip = document.getElementById('terrain-map-tooltip');
+
+  if (!minimap || !overlay) return;
+
+  minimap.addEventListener('click', () => {
+    drawTerrainMap();
+    overlay.classList.add('open');
+  });
+
+  closeBtn.addEventListener('click', () => {
+    overlay.classList.remove('open');
+  });
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+
+  // Hover tooltip for lift stations
+  mapCanvas.addEventListener('mousemove', (e) => {
+    const rect = mapCanvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (mapCanvas.width / rect.width);
+    const my = (e.clientY - rect.top) * (mapCanvas.height / rect.height);
+
+    let hoveredLift = null;
+    for (const ltp of liftTopPositions) {
+      const dx = mx - ltp.canvasX;
+      const dy = my - ltp.canvasY;
+      if (dx * dx + dy * dy < 12 * 12) {
+        hoveredLift = ltp;
+        break;
+      }
+    }
+
+    if (hoveredLift) {
+      tooltip.style.display = 'block';
+      tooltip.textContent = `${hoveredLift.name} (click to travel)`;
+      tooltip.style.left = (e.clientX - overlay.getBoundingClientRect().left + 12) + 'px';
+      tooltip.style.top = (e.clientY - overlay.getBoundingClientRect().top - 30) + 'px';
+      mapCanvas.style.cursor = 'pointer';
+    } else {
+      tooltip.style.display = 'none';
+      mapCanvas.style.cursor = 'crosshair';
+    }
+  });
+
+  // Click to fast travel to lift top
+  mapCanvas.addEventListener('click', (e) => {
+    const rect = mapCanvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (mapCanvas.width / rect.width);
+    const my = (e.clientY - rect.top) * (mapCanvas.height / rect.height);
+
+    for (const ltp of liftTopPositions) {
+      const dx = mx - ltp.canvasX;
+      const dy = my - ltp.canvasY;
+      if (dx * dx + dy * dy < 12 * 12) {
+        // Teleport player to the top of this lift
+        const y = getHeightAt(ltp.worldX, ltp.worldZ, heightmap, resolution);
+        player.position.set(ltp.worldX, y, ltp.worldZ);
+        player.velocity.set(0, 0, 0);
+        player.speed = 0;
+        followCam.reset(player.position, player.heading);
+        overlay.classList.remove('open');
+        break;
+      }
+    }
+  });
 }
 
 // -- Scene setup --
@@ -258,6 +426,9 @@ async function init() {
   // Input handlers
   setupInput();
 
+  // Terrain map (expanded minimap)
+  setupTerrainMap();
+
   // Resize handler
   window.addEventListener('resize', onResize);
 
@@ -290,6 +461,19 @@ function setupInput() {
       case 'ArrowRight': case 'KeyD': input.right = true; break;
       case 'Space': input.brake = true; e.preventDefault(); break;
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
+      case 'KeyM': {
+        const overlay = document.getElementById('terrain-map-overlay');
+        if (overlay && !overlay.classList.contains('open')) {
+          drawTerrainMap();
+          overlay.classList.add('open');
+        }
+        break;
+      }
+      case 'Escape': {
+        const overlay = document.getElementById('terrain-map-overlay');
+        if (overlay) overlay.classList.remove('open');
+        break;
+      }
     }
   });
 
