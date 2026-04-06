@@ -32,7 +32,7 @@ let clock;
 let gameTime = 0;
 
 // Input state
-const input = { left: false, right: false, brake: false };
+const input = { left: false, right: false, brake: false, skate: false };
 let nearbyLift = null; // Track lift bottom station proximity
 
 // -- Loading progress --
@@ -461,7 +461,8 @@ function setupInput() {
     switch (e.code) {
       case 'ArrowLeft': case 'KeyA': input.left = true; break;
       case 'ArrowRight': case 'KeyD': input.right = true; break;
-      case 'Space': input.brake = true; e.preventDefault(); break;
+      case 'Space': input.skate = true; e.preventDefault(); break;
+      case 'ArrowDown': case 'KeyS': input.brake = true; break;
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
       case 'KeyE': {
         if (player.onLift) {
@@ -494,7 +495,8 @@ function setupInput() {
     switch (e.code) {
       case 'ArrowLeft': case 'KeyA': input.left = false; break;
       case 'ArrowRight': case 'KeyD': input.right = false; break;
-      case 'Space': input.brake = false; break;
+      case 'Space': input.skate = false; break;
+      case 'ArrowDown': case 'KeyS': input.brake = false; break;
     }
   });
 
