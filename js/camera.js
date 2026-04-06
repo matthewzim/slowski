@@ -17,9 +17,9 @@ const CAM_CONFIG = {
   // Smoothing factors (0-1, lower = smoother)
   positionSmoothing: 0.04,
   lookSmoothing: 0.08,
-  // Speed zoom (camera pulls back at higher speeds)
-  speedZoomFactor: 0.15,
-  maxSpeedZoom: 8,
+  // Speed zoom (disabled - player stays same size on screen)
+  speedZoomFactor: 0,
+  maxSpeedZoom: 0,
   // Minimum height above terrain
   minTerrainClearance: 3.5,
   // Downward tilt (radians)

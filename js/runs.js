@@ -83,7 +83,7 @@ const RUN_PATHS = {
 };
 
 // Run corridor width in world units
-const RUN_WIDTH = 35;
+const RUN_WIDTH = 175;
 const RUN_WIDTH_SQ = RUN_WIDTH * RUN_WIDTH;
 
 /**
@@ -112,7 +112,7 @@ function getWorldPaths() {
  * Build a spatial grid for fast run proximity queries.
  */
 let _runGrid = null;
-const GRID_CELL_SIZE = 50;
+const GRID_CELL_SIZE = 250;
 
 function buildRunGrid() {
   if (_runGrid) return _runGrid;

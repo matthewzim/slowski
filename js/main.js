@@ -285,10 +285,10 @@ function initScene() {
   scene.background = new THREE.Color(0xd0ddf0);
 
   // Fog for distance fade
-  scene.fog = new THREE.Fog(0xd0ddf0, 400, 1800);
+  scene.fog = new THREE.Fog(0xd0ddf0, 2000, 9000);
 
   // Camera
-  camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 3000);
+  camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 15000);
 
   // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -303,16 +303,16 @@ function initScene() {
   // -- Lighting --
   // Sun
   const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
-  sunLight.position.set(300, 500, 200);
+  sunLight.position.set(1500, 2500, 1000);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.width = 2048;
   sunLight.shadow.mapSize.height = 2048;
   sunLight.shadow.camera.near = 10;
-  sunLight.shadow.camera.far = 1500;
-  sunLight.shadow.camera.left = -400;
-  sunLight.shadow.camera.right = 400;
-  sunLight.shadow.camera.top = 400;
-  sunLight.shadow.camera.bottom = -400;
+  sunLight.shadow.camera.far = 7500;
+  sunLight.shadow.camera.left = -2000;
+  sunLight.shadow.camera.right = 2000;
+  sunLight.shadow.camera.top = 2000;
+  sunLight.shadow.camera.bottom = -2000;
   sunLight.shadow.bias = -0.001;
   scene.add(sunLight);
 
@@ -325,7 +325,7 @@ function initScene() {
   scene.add(hemiLight);
 
   // -- Sky gradient (simple mesh behind everything) --
-  const skyGeo = new THREE.SphereGeometry(2500, 16, 16);
+  const skyGeo = new THREE.SphereGeometry(12500, 16, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     uniforms: {

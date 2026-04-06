@@ -40,10 +40,10 @@ const ELEVATION_LEGEND = [
 // -- World configuration --
 export const TERRAIN_CONFIG = {
   // World dimensions in Three.js units (1 unit ≈ 1 meter)
-  worldWidth: 3000,
-  worldDepth: 3000,
+  worldWidth: 15000,
+  worldDepth: 15000,
   // Heightmap resolution
-  resolution: 256,
+  resolution: 512,
   // Elevation range
   minElevation: 630,
   maxElevation: 2470,
