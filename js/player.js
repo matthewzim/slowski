@@ -16,11 +16,14 @@ const PLAYER_CONFIG = {
   minSpeed: 0.5,
   friction: 0.012,
   airDrag: 0.0015,
-  brakeFriction: 0.08,
+  brakeFriction: 0.35,
   skateForce: 8.0, // Forward push acceleration (m/s²)
   // Turning
   turnSpeed: 0.524,  // ~30 deg/s → 90° in 3 seconds
-  carveFactor: 0.88, // How much speed is preserved in turns
+  carveFactor: 0.97, // How much speed is preserved in turns (gentle initial slowdown)
+  carveBlendMin: 0.03,  // Initial lerp factor when turn begins
+  carveBlendMax: 0.12,  // Max lerp factor after sustained turn
+  carveBlendRampTime: 1.5, // Seconds to reach max blend
   // Player dimensions
   height: 1.6,
   radius: 0.3,
@@ -37,6 +40,7 @@ export class Player {
     this.speed = 0;
     this.heading = Math.PI; // Face downhill initially
     this.onGround = true;
+    this.turnDuration = 0; // Track how long player has been turning
 
     // Input state
     this.input = { left: false, right: false, brake: false };
@@ -332,10 +336,15 @@ export class Player {
     // -- Carving: redirect velocity towards heading --
     const currentSpeed = this.velocity.length();
     if (currentSpeed > PLAYER_CONFIG.minSpeed && (input.left || input.right)) {
+      // Track turn duration for progressive braking
+      this.turnDuration += deltaTime;
+      const turnT = Math.min(this.turnDuration / PLAYER_CONFIG.carveBlendRampTime, 1.0);
+      const carveBlend = PLAYER_CONFIG.carveBlendMin + turnT * (PLAYER_CONFIG.carveBlendMax - PLAYER_CONFIG.carveBlendMin);
       // Blend velocity direction toward heading
       const desiredVel = dir.clone().multiplyScalar(currentSpeed * PLAYER_CONFIG.carveFactor);
-      this.velocity.lerp(desiredVel, 0.1);
+      this.velocity.lerp(desiredVel, carveBlend);
     } else if (currentSpeed > PLAYER_CONFIG.minSpeed) {
+      this.turnDuration = 0;
       // Auto-align heading to velocity when not turning
       const velDir = this.velocity.clone().normalize();
       const targetHeading = Math.atan2(velDir.x, velDir.z);
