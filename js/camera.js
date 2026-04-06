@@ -8,12 +8,12 @@ import * as THREE from 'three';
 import { getHeightAt } from './terrain.js';
 
 const CAM_CONFIG = {
-  // Base distance behind player
-  baseDistance: 12,
+  // Base distance behind player (increased for larger player model)
+  baseDistance: 18,
   // Height above player
-  baseHeight: 5,
+  baseHeight: 8,
   // Look-ahead offset (how far ahead of player to look)
-  lookAheadDist: 8,
+  lookAheadDist: 10,
   // Smoothing factors (0-1, lower = smoother)
   positionSmoothing: 0.04,
   lookSmoothing: 0.08,
@@ -21,7 +21,7 @@ const CAM_CONFIG = {
   speedZoomFactor: 0.15,
   maxSpeedZoom: 8,
   // Minimum height above terrain
-  minTerrainClearance: 2.5,
+  minTerrainClearance: 3.5,
   // Downward tilt (radians)
   baseTilt: 0.15,
 };
