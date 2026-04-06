@@ -18,7 +18,7 @@ const PLAYER_CONFIG = {
   airDrag: 0.002,
   brakeFriction: 0.08,
   // Turning
-  turnSpeed: 2.2,
+  turnSpeed: 0.524,  // ~30 deg/s → 90° in 3 seconds
   carveFactor: 0.85, // How much speed is preserved in turns
   // Player dimensions
   height: 1.6,
@@ -194,8 +194,8 @@ export class Player {
 
   spawn() {
     // Start at top of a run (Crystal Ridge area)
-    const startX = -50;
-    const startZ = -500;
+    const startX = -250;
+    const startZ = -2500;
     const startY = getHeightAt(startX, startZ, this.heightmap, this.resolution);
 
     this.position.set(startX, startY, startZ);
@@ -246,7 +246,7 @@ export class Player {
       } else {
         const pos = lift.curve.getPointAt(this.liftT);
         this.position.copy(pos);
-        this.position.y -= 2.0; // Sit below cable
+        this.position.y -= 10.0; // Sit below cable (5x scale)
         const tangent = lift.curve.getTangentAt(this.liftT);
         this.heading = Math.atan2(tangent.x, tangent.z);
 
@@ -273,10 +273,12 @@ export class Player {
     const terrainNormal = getNormalAt(this.position.x, this.position.z, this.heightmap, this.resolution);
     const slope = getSlopeAt(this.position.x, this.position.z, this.heightmap, this.resolution);
 
-    // -- Turning --
+    // -- Turning (disabled while braking) --
     let turnAmount = 0;
-    if (input.left) turnAmount += PLAYER_CONFIG.turnSpeed;
-    if (input.right) turnAmount -= PLAYER_CONFIG.turnSpeed;
+    if (!input.brake) {
+      if (input.left) turnAmount += PLAYER_CONFIG.turnSpeed;
+      if (input.right) turnAmount -= PLAYER_CONFIG.turnSpeed;
+    }
 
     this.heading += turnAmount * deltaTime;
 

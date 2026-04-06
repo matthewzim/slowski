@@ -15,50 +15,50 @@ export const LIFT_DEFS = [
     name: 'Excalibur Gondola',
     points: [[0.06, 0.14], [0.12, 0.20], [0.18, 0.28], [0.24, 0.34]],
     type: 'gondola',
-    towerSpacing: 80,
-    cableHeight: 8,
+    towerSpacing: 400,
+    cableHeight: 40,
   },
   {
     name: 'Blackcomb Gondola',
     points: [[0.16, 0.34], [0.22, 0.40], [0.28, 0.48], [0.34, 0.54]],
     type: 'gondola',
-    towerSpacing: 90,
-    cableHeight: 10,
+    towerSpacing: 450,
+    cableHeight: 50,
   },
   {
     name: 'Excelerator Express',
     points: [[0.30, 0.24], [0.35, 0.30], [0.40, 0.38], [0.44, 0.44]],
     type: 'quad',
-    towerSpacing: 70,
-    cableHeight: 7,
+    towerSpacing: 350,
+    cableHeight: 35,
   },
   {
     name: 'Crystal Ridge Express',
     points: [[0.52, 0.06], [0.54, 0.12], [0.55, 0.20], [0.56, 0.26]],
     type: 'quad',
-    towerSpacing: 65,
-    cableHeight: 7,
+    towerSpacing: 325,
+    cableHeight: 35,
   },
   {
     name: 'Glacier Express',
     points: [[0.56, 0.34], [0.58, 0.40], [0.60, 0.46], [0.62, 0.54]],
     type: 'quad',
-    towerSpacing: 70,
-    cableHeight: 7,
+    towerSpacing: 350,
+    cableHeight: 35,
   },
   {
     name: 'Catskinner Express',
     points: [[0.22, 0.56], [0.26, 0.52], [0.30, 0.50], [0.36, 0.46], [0.40, 0.44]],
     type: 'quad',
-    towerSpacing: 65,
-    cableHeight: 6,
+    towerSpacing: 325,
+    cableHeight: 30,
   },
   {
     name: '7th Heaven Express',
     points: [[0.64, 0.58], [0.66, 0.64], [0.68, 0.72], [0.70, 0.82]],
     type: 'quad',
-    towerSpacing: 75,
-    cableHeight: 8,
+    towerSpacing: 375,
+    cableHeight: 40,
   },
 ];
 
@@ -66,33 +66,33 @@ export const LIFT_DEFS = [
 function createTowerGeometry(height = 12) {
   const group = new THREE.Group();
 
-  // Main pole - scales to reach cable
-  const poleGeo = new THREE.CylinderGeometry(0.3, 0.4, height, 6);
+  // Main pole - scales to reach cable (5x scale)
+  const poleGeo = new THREE.CylinderGeometry(1.5, 2.0, height, 6);
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.7, roughness: 0.3 });
   const pole = new THREE.Mesh(poleGeo, poleMat);
   pole.position.y = height / 2;
   pole.castShadow = true;
   group.add(pole);
 
-  // Cross arm at top
-  const armGeo = new THREE.BoxGeometry(4, 0.3, 0.3);
+  // Cross arm at top (5x scale)
+  const armGeo = new THREE.BoxGeometry(20, 1.5, 1.5);
   const arm = new THREE.Mesh(armGeo, poleMat);
   arm.position.y = height;
   arm.castShadow = true;
   group.add(arm);
 
-  // Sheaves (wheels at top)
-  const sheaveGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.2, 8);
+  // Sheaves (wheels at top) (5x scale)
+  const sheaveGeo = new THREE.CylinderGeometry(2.5, 2.5, 1.0, 8);
   const sheaveMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8, roughness: 0.2 });
 
   const sheaveL = new THREE.Mesh(sheaveGeo, sheaveMat);
   sheaveL.rotation.z = Math.PI / 2;
-  sheaveL.position.set(-1.8, height + 0.2, 0);
+  sheaveL.position.set(-9, height + 1.0, 0);
   group.add(sheaveL);
 
   const sheaveR = new THREE.Mesh(sheaveGeo, sheaveMat);
   sheaveR.rotation.z = Math.PI / 2;
-  sheaveR.position.set(1.8, height + 0.2, 0);
+  sheaveR.position.set(9, height + 1.0, 0);
   group.add(sheaveR);
 
   return group;
@@ -103,46 +103,46 @@ function createChairGeometry(type) {
   const group = new THREE.Group();
 
   if (type === 'gondola') {
-    // Gondola cabin
-    const cabinGeo = new THREE.BoxGeometry(1.5, 2.2, 1.5);
+    // Gondola cabin (5x scale)
+    const cabinGeo = new THREE.BoxGeometry(7.5, 11.0, 7.5);
     const cabinMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, metalness: 0.3, roughness: 0.5 });
     const cabin = new THREE.Mesh(cabinGeo, cabinMat);
-    cabin.position.y = -1.5;
+    cabin.position.y = -7.5;
     cabin.castShadow = true;
     group.add(cabin);
 
-    // Hanger bar
-    const hangerGeo = new THREE.CylinderGeometry(0.05, 0.05, 2, 4);
+    // Hanger bar (5x scale)
+    const hangerGeo = new THREE.CylinderGeometry(0.25, 0.25, 10, 4);
     const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
     const hanger = new THREE.Mesh(hangerGeo, hangerMat);
-    hanger.position.y = -0.2;
+    hanger.position.y = -1.0;
     group.add(hanger);
   } else {
-    // Quad chair
-    const seatGeo = new THREE.BoxGeometry(2.5, 0.1, 0.7);
+    // Quad chair (5x scale)
+    const seatGeo = new THREE.BoxGeometry(12.5, 0.5, 3.5);
     const seatMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.2, roughness: 0.6 });
     const seat = new THREE.Mesh(seatGeo, seatMat);
-    seat.position.y = -2.0;
+    seat.position.y = -10.0;
     seat.castShadow = true;
     group.add(seat);
 
-    // Back rest
-    const backGeo = new THREE.BoxGeometry(2.5, 1.0, 0.1);
+    // Back rest (5x scale)
+    const backGeo = new THREE.BoxGeometry(12.5, 5.0, 0.5);
     const back = new THREE.Mesh(backGeo, seatMat);
-    back.position.set(0, -1.5, -0.35);
+    back.position.set(0, -7.5, -1.75);
     group.add(back);
 
-    // Hanger
-    const hangerGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.2, 4);
+    // Hanger (5x scale)
+    const hangerGeo = new THREE.CylinderGeometry(0.2, 0.2, 11.0, 4);
     const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
     const hanger = new THREE.Mesh(hangerGeo, hangerMat);
-    hanger.position.y = -0.9;
+    hanger.position.y = -4.5;
     group.add(hanger);
 
-    // Foot rest
-    const footGeo = new THREE.BoxGeometry(2.2, 0.05, 0.3);
+    // Foot rest (5x scale)
+    const footGeo = new THREE.BoxGeometry(11.0, 0.25, 1.5);
     const foot = new THREE.Mesh(footGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
-    foot.position.set(0, -2.8, 0.3);
+    foot.position.set(0, -14.0, 1.5);
     group.add(foot);
   }
 
@@ -210,8 +210,8 @@ function buildLift(def, heightmap, resolution) {
     const dz = next.z - prev.z;
     const len = Math.sqrt(dx * dx + dz * dz) || 1;
     // Perpendicular offset (rotated 90 degrees)
-    const perpX = -dz / len * 3;
-    const perpZ = dx / len * 3;
+    const perpX = -dz / len * 15;
+    const perpZ = dx / len * 15;
     return p.clone().add(new THREE.Vector3(perpX, 0, perpZ));
   });
   const returnGeo = new THREE.BufferGeometry().setFromPoints(returnPoints);
@@ -244,7 +244,7 @@ function buildLift(def, heightmap, resolution) {
 
   // Create chairs along the cable
   const chairs = [];
-  const chairSpacing = 30; // meters between chairs
+  const chairSpacing = 150; // meters between chairs (5x scale)
   const numChairs = Math.floor(totalLength / chairSpacing);
 
   for (let i = 0; i < numChairs; i++) {
@@ -322,8 +322,8 @@ export function updateLifts(lifts, deltaTime) {
         const perpX = -tangent.z;
         const perpZ = tangent.x;
         const len = Math.sqrt(perpX * perpX + perpZ * perpZ) || 1;
-        pos.x += (perpX / len) * 3;
-        pos.z += (perpZ / len) * 3;
+        pos.x += (perpX / len) * 15;
+        pos.z += (perpZ / len) * 15;
       }
 
       chair.position.copy(pos);
@@ -340,7 +340,7 @@ export function updateLifts(lifts, deltaTime) {
  * Find the nearest lift bottom station to a position.
  * Returns { lift, distance } or null if none within range.
  */
-export function findNearestLiftBottom(lifts, position, maxDistance = 30) {
+export function findNearestLiftBottom(lifts, position, maxDistance = 150) {
   let nearest = null;
   let nearestDist = maxDistance;
 

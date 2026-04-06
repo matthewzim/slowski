@@ -18,9 +18,9 @@ const TREE_CONFIG = {
   // Slope limits (radians)
   maxSlope: 0.85, // ~49 degrees - too steep for trees
   // Spacing
-  minSpacing: 8,
+  minSpacing: 40,
   // Run buffer (extra distance from runs to keep clear)
-  runBuffer: 10,
+  runBuffer: 50,
 };
 
 // Simple pseudo-random for deterministic placement
@@ -153,8 +153,8 @@ export function generateTrees(heightmap, resolution) {
     return new THREE.Group();
   }
 
-  // Create instanced meshes for trunk and foliage
-  const trunkGeo = new THREE.CylinderGeometry(0.15, 0.25, 2, 5);
+  // Create instanced meshes for trunk and foliage (5x scale for proportionality)
+  const trunkGeo = new THREE.CylinderGeometry(0.75, 1.25, 10, 5);
   const trunkMat = new THREE.MeshStandardMaterial({
     color: 0x4a3520,
     roughness: 0.9,
@@ -165,10 +165,10 @@ export function generateTrees(heightmap, resolution) {
     roughness: 0.8,
   });
 
-  // We'll use three cone layers merged concept via separate InstancedMeshes
-  const cone1Geo = new THREE.ConeGeometry(2.2, 3.5, 6);
-  const cone2Geo = new THREE.ConeGeometry(1.7, 3.0, 6);
-  const cone3Geo = new THREE.ConeGeometry(1.1, 2.5, 6);
+  // We'll use three cone layers merged concept via separate InstancedMeshes (5x scale)
+  const cone1Geo = new THREE.ConeGeometry(11.0, 17.5, 6);
+  const cone2Geo = new THREE.ConeGeometry(8.5, 15.0, 6);
+  const cone3Geo = new THREE.ConeGeometry(5.5, 12.5, 6);
 
   const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
   const cone1Mesh = new THREE.InstancedMesh(cone1Geo, foliageMat, count);
@@ -198,24 +198,24 @@ export function generateTrees(heightmap, resolution) {
     quaternion.setFromEuler(euler);
     const s = tree.scale;
 
-    // Trunk
-    position.set(tree.x, tree.y + 1 * s, tree.z);
+    // Trunk (5x vertical offsets)
+    position.set(tree.x, tree.y + 5 * s, tree.z);
     scale.set(s, s, s);
     matrix.compose(position, quaternion, scale);
     trunkMesh.setMatrixAt(i, matrix);
 
     // Cone 1 (bottom)
-    position.set(tree.x, tree.y + 3.5 * s, tree.z);
+    position.set(tree.x, tree.y + 17.5 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone1Mesh.setMatrixAt(i, matrix);
 
     // Cone 2 (middle)
-    position.set(tree.x, tree.y + 5.5 * s, tree.z);
+    position.set(tree.x, tree.y + 27.5 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone2Mesh.setMatrixAt(i, matrix);
 
     // Cone 3 (top)
-    position.set(tree.x, tree.y + 7.2 * s, tree.z);
+    position.set(tree.x, tree.y + 36.0 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone3Mesh.setMatrixAt(i, matrix);
 
