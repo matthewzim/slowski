@@ -459,10 +459,10 @@ function nextFrame() {
 function setupInput() {
   window.addEventListener('keydown', (e) => {
     switch (e.code) {
-      case 'ArrowLeft': input.left = true; break;
+      case 'ArrowLeft': case 'KeyA': input.left = true; break;
       case 'ArrowRight': case 'KeyD': input.right = true; break;
       case 'Space': input.skate = true; e.preventDefault(); break;
-      case 'ArrowDown': case 'KeyA': input.brake = true; break;
+      case 'ArrowDown': case 'KeyS': input.brake = true; break;
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
       case 'KeyE': {
         if (player.onLift) {
@@ -493,10 +493,10 @@ function setupInput() {
 
   window.addEventListener('keyup', (e) => {
     switch (e.code) {
-      case 'ArrowLeft': input.left = false; break;
+      case 'ArrowLeft': case 'KeyA': input.left = false; break;
       case 'ArrowRight': case 'KeyD': input.right = false; break;
       case 'Space': input.skate = false; break;
-      case 'ArrowDown': case 'KeyA': input.brake = false; break;
+      case 'ArrowDown': case 'KeyS': input.brake = false; break;
     }
   });
 
