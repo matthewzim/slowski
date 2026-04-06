@@ -6,6 +6,9 @@
 import * as THREE from 'three';
 import { getHeightAt, getNormalAt, getSlopeAt, TERRAIN_CONFIG } from './terrain.js';
 
+const TRAIL_DURATION = 10; // seconds trails last
+const TRAIL_MAX_POINTS = 600;
+
 const PLAYER_CONFIG = {
   // Physics
   gravity: 9.81,
@@ -37,8 +40,20 @@ export class Player {
     // Input state
     this.input = { left: false, right: false, brake: false };
 
+    // Chairlift state
+    this.onLift = false;
+    this.currentLift = null;
+    this.liftT = 0;
+
     // Create visual mesh
     this.mesh = this._createMesh();
+
+    // Ski trails
+    this.trailHistory = []; // { pos: Vector3, time: number }
+    this.trailLineL = null;
+    this.trailLineR = null;
+    this.trailGroup = new THREE.Group();
+    this._initTrails();
 
     // Spawn position
     this.spawn();
@@ -87,7 +102,94 @@ export class Player {
     poleR.rotation.x = 0.3;
     group.add(poleR);
 
+    // Scale player to ~25% of screen height
+    group.scale.set(3, 3, 3);
+
     return group;
+  }
+
+  _initTrails() {
+    const trailMat = new THREE.LineBasicMaterial({
+      color: 0x8899bb,
+      transparent: true,
+      opacity: 0.6,
+      linewidth: 2,
+    });
+
+    // Left ski trail
+    const geoL = new THREE.BufferGeometry();
+    geoL.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TRAIL_MAX_POINTS * 3), 3));
+    geoL.setDrawRange(0, 0);
+    this.trailLineL = new THREE.Line(geoL, trailMat);
+    this.trailLineL.frustumCulled = false;
+    this.trailGroup.add(this.trailLineL);
+
+    // Right ski trail
+    const geoR = new THREE.BufferGeometry();
+    geoR.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TRAIL_MAX_POINTS * 3), 3));
+    geoR.setDrawRange(0, 0);
+    this.trailLineR = new THREE.Line(geoR, trailMat.clone());
+    this.trailLineR.frustumCulled = false;
+    this.trailGroup.add(this.trailLineR);
+  }
+
+  _updateTrails(gameTime) {
+    // Only record trails when on ground and moving
+    if (this.onGround && this.speed > 0.5 && !this.onLift) {
+      const skiOffsetLocal = 0.15 * 3; // ski offset * scale
+      const sinH = Math.sin(this.heading);
+      const cosH = Math.cos(this.heading);
+      // Perpendicular to heading for left/right ski offset
+      const perpX = cosH;
+      const perpZ = -sinH;
+
+      const baseY = this.position.y + 0.05;
+
+      this.trailHistory.push({
+        lx: this.position.x - perpX * skiOffsetLocal,
+        lz: this.position.z - perpZ * skiOffsetLocal,
+        rx: this.position.x + perpX * skiOffsetLocal,
+        rz: this.position.z + perpZ * skiOffsetLocal,
+        y: baseY,
+        time: gameTime,
+      });
+
+      if (this.trailHistory.length > TRAIL_MAX_POINTS) {
+        this.trailHistory.shift();
+      }
+    }
+
+    // Remove old trail points
+    const cutoff = gameTime - TRAIL_DURATION;
+    while (this.trailHistory.length > 0 && this.trailHistory[0].time < cutoff) {
+      this.trailHistory.shift();
+    }
+
+    // Update trail line geometries
+    const count = this.trailHistory.length;
+    if (count < 2) {
+      this.trailLineL.geometry.setDrawRange(0, 0);
+      this.trailLineR.geometry.setDrawRange(0, 0);
+      return;
+    }
+
+    const posL = this.trailLineL.geometry.attributes.position.array;
+    const posR = this.trailLineR.geometry.attributes.position.array;
+
+    for (let i = 0; i < count; i++) {
+      const h = this.trailHistory[i];
+      posL[i * 3] = h.lx;
+      posL[i * 3 + 1] = h.y;
+      posL[i * 3 + 2] = h.lz;
+      posR[i * 3] = h.rx;
+      posR[i * 3 + 1] = h.y;
+      posR[i * 3 + 2] = h.rz;
+    }
+
+    this.trailLineL.geometry.attributes.position.needsUpdate = true;
+    this.trailLineR.geometry.attributes.position.needsUpdate = true;
+    this.trailLineL.geometry.setDrawRange(0, count);
+    this.trailLineR.geometry.setDrawRange(0, count);
   }
 
   spawn() {
@@ -100,14 +202,71 @@ export class Player {
     this.velocity.set(0, 0, 0);
     this.speed = 0;
     this.heading = Math.PI * 0.7; // Pointing roughly downhill
+    this.onLift = false;
+    this.currentLift = null;
     this.mesh.position.copy(this.position);
     this.mesh.position.y += PLAYER_CONFIG.height * 0.1;
   }
 
-  update(deltaTime, input) {
+  // Board a chairlift
+  boardLift(lift) {
+    this.onLift = true;
+    this.currentLift = lift;
+    this.liftT = 0.0; // Start at bottom of curve
+    this.velocity.set(0, 0, 0);
+    this.speed = 0;
+  }
+
+  // Skip to top of chairlift
+  skipToLiftTop() {
+    if (!this.onLift || !this.currentLift) return;
+    const topPoint = this.currentLift.curve.getPointAt(1.0);
+    const terrainY = getHeightAt(topPoint.x, topPoint.z, this.heightmap, this.resolution);
+    this.position.set(topPoint.x, terrainY, topPoint.z);
+    this.velocity.set(0, 0, 0);
+    this.speed = 0;
+    this.onLift = false;
+    this.currentLift = null;
+  }
+
+  update(deltaTime, input, gameTime) {
     if (deltaTime > 0.1) deltaTime = 0.1; // Cap dt to prevent physics explosions
 
     this.input = input;
+
+    // If riding a chairlift, move along the curve
+    if (this.onLift && this.currentLift) {
+      const lift = this.currentLift;
+      const speedT = (lift.speed * deltaTime) / lift.totalLength;
+      this.liftT += speedT;
+
+      if (this.liftT >= 1.0) {
+        // Reached the top
+        this.skipToLiftTop();
+      } else {
+        const pos = lift.curve.getPointAt(this.liftT);
+        this.position.copy(pos);
+        this.position.y -= 2.0; // Sit below cable
+        const tangent = lift.curve.getTangentAt(this.liftT);
+        this.heading = Math.atan2(tangent.x, tangent.z);
+
+        this.mesh.position.copy(this.position);
+        this.mesh.rotation.y = this.heading;
+        this.mesh.rotation.x = 0;
+        this.mesh.rotation.z = 0;
+      }
+
+      this._updateTrails(gameTime || 0);
+      return {
+        speed: 0,
+        speedKmh: 0,
+        elevation: this.position.y + TERRAIN_CONFIG.baseElevation,
+        slope: 0,
+        onGround: false,
+        onLift: true,
+        liftName: lift.name,
+      };
+    }
 
     // Get terrain info at current position
     const terrainHeight = getHeightAt(this.position.x, this.position.z, this.heightmap, this.resolution);
@@ -238,12 +397,16 @@ export class Player {
     )));
     this.mesh.rotation.x = slopeAngle * 0.5;
 
+    // Update ski trails
+    this._updateTrails(gameTime || 0);
+
     return {
       speed: this.speed,
       speedKmh: this.speed * 3.6,
       elevation: groundY + TERRAIN_CONFIG.baseElevation,
       slope: slope * (180 / Math.PI),
       onGround: this.onGround,
+      onLift: false,
     };
   }
 

@@ -16,7 +16,7 @@ import {
   normalizedToWorld,
 } from './terrain.js';
 import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSprayParticles, updateSprayParticles } from './snow.js';
-import { generateLiftSystem, updateLifts, LIFT_DEFS } from './lifts.js';
+import { generateLiftSystem, updateLifts, findNearestLiftBottom, LIFT_DEFS } from './lifts.js';
 import { generateTrees } from './trees.js';
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
@@ -33,6 +33,7 @@ let gameTime = 0;
 
 // Input state
 const input = { left: false, right: false, brake: false };
+let nearbyLift = null; // Track lift bottom station proximity
 
 // -- Loading progress --
 function setLoadProgress(percent, message) {
@@ -401,6 +402,7 @@ async function init() {
   // Player
   player = new Player(heightmap, resolution);
   scene.add(player.mesh);
+  scene.add(player.trailGroup);
 
   // Camera
   followCam = new FollowCamera(camera, heightmap, resolution);
@@ -461,6 +463,17 @@ function setupInput() {
       case 'ArrowRight': case 'KeyD': input.right = true; break;
       case 'Space': input.brake = true; e.preventDefault(); break;
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
+      case 'KeyE': {
+        if (player.onLift) {
+          // Skip to top of lift
+          player.skipToLiftTop();
+          followCam.reset(player.position, player.heading);
+        } else if (nearbyLift) {
+          // Board the nearby lift
+          player.boardLift(nearbyLift.lift);
+        }
+        break;
+      }
       case 'KeyM': {
         const overlay = document.getElementById('terrain-map-overlay');
         if (overlay && !overlay.classList.contains('open')) {
@@ -532,6 +545,20 @@ function updateHUD(stats) {
   if (elevEl) {
     elevEl.textContent = `Elev: ${Math.round(stats.elevation)}m`;
   }
+
+  // Lift prompt
+  const liftPrompt = document.getElementById('lift-prompt');
+  if (liftPrompt) {
+    if (stats.onLift) {
+      liftPrompt.textContent = `Riding ${stats.liftName} - Press E to skip to top`;
+      liftPrompt.style.display = 'block';
+    } else if (nearbyLift) {
+      liftPrompt.textContent = `Press E to board ${nearbyLift.lift.name}`;
+      liftPrompt.style.display = 'block';
+    } else {
+      liftPrompt.style.display = 'none';
+    }
+  }
 }
 
 // -- Game loop --
@@ -543,8 +570,15 @@ function animate() {
   const deltaTime = clock.getDelta();
   gameTime += deltaTime;
 
+  // Check lift proximity
+  if (!player.onLift) {
+    nearbyLift = findNearestLiftBottom(lifts, player.position, 30);
+  } else {
+    nearbyLift = null;
+  }
+
   // Update player
-  const stats = player.update(deltaTime, input);
+  const stats = player.update(deltaTime, input, gameTime);
 
   // Update camera
   followCam.update(player.position, player.heading, player.speed, deltaTime);

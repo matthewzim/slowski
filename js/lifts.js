@@ -201,10 +201,18 @@ function buildLift(def, heightmap, resolution) {
   const cableLine = new THREE.Line(cableGeo, cableMat);
   group.add(cableLine);
 
-  // Second cable (offset for up/down lines)
-  const returnPoints = curvePoints.map(p => {
-    const offset = new THREE.Vector3(3, 0, 0);
-    return p.clone().add(offset);
+  // Second cable (offset perpendicular to cable direction for proper up/down sides)
+  const returnPoints = curvePoints.map((p, i) => {
+    // Get direction to next point (or from previous) to compute perpendicular
+    const next = curvePoints[Math.min(i + 1, curvePoints.length - 1)];
+    const prev = curvePoints[Math.max(i - 1, 0)];
+    const dx = next.x - prev.x;
+    const dz = next.z - prev.z;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    // Perpendicular offset (rotated 90 degrees)
+    const perpX = -dz / len * 3;
+    const perpZ = dx / len * 3;
+    return p.clone().add(new THREE.Vector3(perpX, 0, perpZ));
   });
   const returnGeo = new THREE.BufferGeometry().setFromPoints(returnPoints);
   const returnLine = new THREE.Line(returnGeo, cableMat);
@@ -247,15 +255,19 @@ function buildLift(def, heightmap, resolution) {
     group.add(chair);
   }
 
+  // Store bottom station position
+  const bottomPoint = densePoints[0].clone();
+
   return {
     group,
     chairs,
     curve: correctedCurve,
-    speed: def.type === 'gondola' ? 4.5 : 3.5, // m/s
+    speed: def.type === 'gondola' ? 9.0 : 7.0, // m/s (doubled)
     totalLength,
     type: def.type,
     name: def.name,
-    topPoint: densePoints[densePoints.length - 1].clone(), // Top station position
+    topPoint: densePoints[densePoints.length - 1].clone(),
+    bottomPoint,
   };
 }
 
@@ -280,31 +292,68 @@ export function generateLiftSystem(heightmap, resolution) {
 
 /**
  * Update chair positions along cables (call each frame).
+ * Up-going chairs move from t=0 to t=1 on the main cable.
+ * Down-going chairs move from t=1 to t=0 on the offset (return) cable.
  */
 export function updateLifts(lifts, deltaTime) {
   for (const lift of lifts) {
     const speedT = (lift.speed * deltaTime) / lift.totalLength;
 
     for (const chair of lift.chairs) {
+      const isUphill = chair.userData.direction > 0;
+
       // Move along curve
-      chair.userData.t += speedT * 0.3;
+      if (isUphill) {
+        chair.userData.t += speedT;
+      } else {
+        chair.userData.t -= speedT;
+      }
       if (chair.userData.t > 1) chair.userData.t -= 1;
       if (chair.userData.t < 0) chair.userData.t += 1;
 
       const t = chair.userData.t;
       const pos = lift.curve.getPointAt(t);
 
-      // Offset alternate chairs to simulate up/down lines
-      if (chair.userData.direction < 0) {
-        pos.x += 3;
+      // Orient chair along cable
+      const tangent = lift.curve.getTangentAt(t);
+
+      // Down-going chairs ride on the offset (return) cable
+      if (!isUphill) {
+        const perpX = -tangent.z;
+        const perpZ = tangent.x;
+        const len = Math.sqrt(perpX * perpX + perpZ * perpZ) || 1;
+        pos.x += (perpX / len) * 3;
+        pos.z += (perpZ / len) * 3;
       }
 
       chair.position.copy(pos);
 
-      // Orient chair along cable
-      const tangent = lift.curve.getTangentAt(t);
-      const angle = Math.atan2(tangent.x, tangent.z);
+      // Flip rotation for downhill chairs
+      let angle = Math.atan2(tangent.x, tangent.z);
+      if (!isUphill) angle += Math.PI;
       chair.rotation.y = angle;
     }
   }
+}
+
+/**
+ * Find the nearest lift bottom station to a position.
+ * Returns { lift, distance } or null if none within range.
+ */
+export function findNearestLiftBottom(lifts, position, maxDistance = 30) {
+  let nearest = null;
+  let nearestDist = maxDistance;
+
+  for (const lift of lifts) {
+    const bp = lift.bottomPoint;
+    const dx = position.x - bp.x;
+    const dz = position.z - bp.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = { lift, distance: dist };
+    }
+  }
+
+  return nearest;
 }
