@@ -12,14 +12,15 @@ const TRAIL_MAX_POINTS = 600;
 const PLAYER_CONFIG = {
   // Physics
   gravity: 9.81,
-  maxSpeed: 35, // m/s (~126 km/h)
+  maxSpeed: 45, // m/s (~162 km/h)
   minSpeed: 0.5,
-  friction: 0.015,
-  airDrag: 0.002,
+  friction: 0.012,
+  airDrag: 0.0015,
   brakeFriction: 0.08,
+  skateForce: 8.0, // Forward push acceleration (m/s²)
   // Turning
   turnSpeed: 0.524,  // ~30 deg/s → 90° in 3 seconds
-  carveFactor: 0.85, // How much speed is preserved in turns
+  carveFactor: 0.88, // How much speed is preserved in turns
   // Player dimensions
   height: 1.6,
   radius: 0.3,
@@ -299,6 +300,12 @@ export class Player {
 
     // Apply slope gravity
     this.velocity.add(slopeGravity.multiplyScalar(deltaTime));
+
+    // -- Skating (forward push) --
+    if (input.skate && this.onGround) {
+      const skateDir = dir.clone().multiplyScalar(PLAYER_CONFIG.skateForce * deltaTime);
+      this.velocity.add(skateDir);
+    }
 
     // -- Friction --
     let frictionCoeff = PLAYER_CONFIG.friction;
