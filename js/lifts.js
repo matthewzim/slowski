@@ -1,106 +1,175 @@
 /**
- * Chairlift System for Jamboree Snow Resort
- * Creates terrain-following lift lines with towers, cables, and moving chairs.
+ * Chairlift System for Blackcomb Mountain
+ * Creates terrain-following lift lines with towers, cables, and moving chairs
+ * using the 1379_chairlift.glb model.
  *
- * 9 chairlifts matching the Jamboree Snow Resort trail map:
- * 1 - Base village to lower mid-mountain (green, beginner)
- * 2 - Right mid to right shoulder (orange)
- * 3 - Right base to right lower mountain (orange)
- * 4 - Right center to upper right ridge (orange)
- * 5 - Left base to left shoulder (green)
- * 6 - Upper mountain to summit (orange)
- * 7 - Mid center to center bowl (yellow)
- * 8 - Upper mountain to summit (orange, parallel to 6)
- * 9 - Upper mountain to summit (orange, parallel to 6,8)
+ * 7 chairlifts matching the Blackcomb Mountain trail map:
+ * 1 - Excalibur Gondola (base to lower mid-mountain)
+ * 2 - Blackcomb Gondola (base area to mid-mountain)
+ * 3 - Excelerator Express (mid-mountain express)
+ * 4 - Crystal Ridge Express (upper mountain)
+ * 5 - Glacier Express (right side, mid to upper)
+ * 6 - Catskinner Express (mid-mountain center)
+ * 7 - 7th Heaven Express (lower-right to near summit)
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { normalizedToWorld, getHeightAt, TERRAIN_CONFIG } from './terrain.js';
 
-// -- Lift definitions --
+// -- Lift definitions (positions from Blackcomb Mountain map) --
+// Leftmost point = start (bottom station), rightmost = end (top station)
 export const LIFT_DEFS = [
   {
-    name: 'Lift 1 - Village Express',
+    name: 'Excalibur Gondola',
     number: 1,
-    points: [[0.48, 0.12], [0.47, 0.18], [0.46, 0.26], [0.46, 0.35]],
+    points: [[0.10, 0.12], [0.13, 0.16], [0.16, 0.19], [0.19, 0.22]],
     type: 'gondola',
     towerSpacing: 400,
     cableHeight: 40,
-    color: 0x44cc44,
+    color: 0xcc2222,
   },
   {
-    name: 'Lift 2 - Ridge Runner',
+    name: 'Blackcomb Gondola',
     number: 2,
-    points: [[0.73, 0.38], [0.72, 0.44], [0.72, 0.50], [0.72, 0.55]],
-    type: 'quad',
-    towerSpacing: 350,
-    cableHeight: 35,
-    color: 0xff8800,
+    points: [[0.20, 0.28], [0.26, 0.33], [0.32, 0.37], [0.38, 0.42]],
+    type: 'gondola',
+    towerSpacing: 400,
+    cableHeight: 40,
+    color: 0xcc2222,
   },
   {
-    name: 'Lift 3 - East Side Express',
+    name: 'Excelerator Express',
     number: 3,
-    points: [[0.82, 0.12], [0.80, 0.18], [0.78, 0.24], [0.75, 0.30]],
+    points: [[0.34, 0.30], [0.38, 0.34], [0.42, 0.38], [0.46, 0.42]],
     type: 'quad',
     towerSpacing: 350,
     cableHeight: 35,
     color: 0xff8800,
   },
   {
-    name: 'Lift 4 - Summit Rider',
+    name: 'Crystal Ridge Express',
     number: 4,
-    points: [[0.64, 0.54], [0.63, 0.60], [0.62, 0.68], [0.62, 0.75]],
+    points: [[0.42, 0.16], [0.48, 0.20], [0.54, 0.24], [0.60, 0.28]],
+    type: 'quad',
+    towerSpacing: 350,
+    cableHeight: 35,
+    color: 0xff8800,
+  },
+  {
+    name: 'Glacier Express',
+    number: 5,
+    points: [[0.54, 0.40], [0.58, 0.44], [0.63, 0.48], [0.68, 0.52]],
     type: 'quad',
     towerSpacing: 375,
-    cableHeight: 40,
-    color: 0xff8800,
-  },
-  {
-    name: 'Lift 5 - Timberline',
-    number: 5,
-    points: [[0.13, 0.36], [0.14, 0.42], [0.16, 0.48], [0.18, 0.55]],
-    type: 'quad',
-    towerSpacing: 325,
-    cableHeight: 30,
-    color: 0x44cc44,
-  },
-  {
-    name: 'Lift 6 - Peak Express',
-    number: 6,
-    points: [[0.40, 0.73], [0.40, 0.78], [0.41, 0.83], [0.41, 0.88]],
-    type: 'quad',
-    towerSpacing: 350,
     cableHeight: 35,
     color: 0xff8800,
   },
   {
-    name: 'Lift 7 - Bowl Cruiser',
-    number: 7,
-    points: [[0.46, 0.42], [0.47, 0.48], [0.48, 0.55], [0.48, 0.62]],
+    name: 'Catskinner Express',
+    number: 6,
+    points: [[0.36, 0.44], [0.42, 0.47], [0.47, 0.50], [0.52, 0.53]],
     type: 'quad',
     towerSpacing: 350,
     cableHeight: 35,
     color: 0xffcc00,
   },
   {
-    name: 'Lift 8 - Alpine Express',
-    number: 8,
-    points: [[0.44, 0.73], [0.45, 0.78], [0.44, 0.83], [0.43, 0.88]],
+    name: '7th Heaven Express',
+    number: 7,
+    points: [[0.58, 0.60], [0.61, 0.66], [0.64, 0.72], [0.67, 0.78]],
     type: 'quad',
-    towerSpacing: 350,
-    cableHeight: 35,
-    color: 0xff8800,
-  },
-  {
-    name: 'Lift 9 - Glacier Chair',
-    number: 9,
-    points: [[0.48, 0.73], [0.50, 0.78], [0.50, 0.83], [0.49, 0.88]],
-    type: 'quad',
-    towerSpacing: 350,
-    cableHeight: 35,
+    towerSpacing: 375,
+    cableHeight: 40,
     color: 0xff8800,
   },
 ];
+
+// -- Chairlift GLB model cache --
+let chairliftModelTemplate = null;
+
+/**
+ * Load the 1379_chairlift.glb model for use as chair geometry.
+ */
+async function loadChairliftModel() {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load('1379_chairlift.glb', resolve, undefined, reject);
+  });
+
+  const model = gltf.scene;
+
+  // Compute bounding box to normalize scale
+  const bbox = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+
+  // Scale model so it's approximately 12 units tall (matching previous chair size)
+  const targetHeight = 12;
+  const scaleFactor = targetHeight / Math.max(size.y, 0.01);
+  model.scale.multiplyScalar(scaleFactor);
+
+  // Center horizontally, position so the top (hanger point) is at y=0
+  model.position.set(
+    -center.x * scaleFactor,
+    -bbox.max.y * scaleFactor,
+    -center.z * scaleFactor
+  );
+
+  // Enable shadows on all meshes
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+    }
+  });
+
+  // Wrap in a group for consistent handling
+  const wrapper = new THREE.Group();
+  wrapper.add(model);
+
+  chairliftModelTemplate = wrapper;
+  return wrapper;
+}
+
+/**
+ * Create a chair instance from the loaded GLB model.
+ */
+function createChairFromModel() {
+  if (!chairliftModelTemplate) {
+    // Fallback to simple geometry if model failed to load
+    return createFallbackChair();
+  }
+  return chairliftModelTemplate.clone();
+}
+
+/**
+ * Simple fallback chair geometry (used if GLB fails to load).
+ */
+function createFallbackChair() {
+  const group = new THREE.Group();
+
+  const seatGeo = new THREE.BoxGeometry(12.5, 0.5, 3.5);
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.2, roughness: 0.6 });
+  const seat = new THREE.Mesh(seatGeo, seatMat);
+  seat.position.y = -10.0;
+  seat.castShadow = true;
+  group.add(seat);
+
+  const backGeo = new THREE.BoxGeometry(12.5, 5.0, 0.5);
+  const back = new THREE.Mesh(backGeo, seatMat);
+  back.position.set(0, -7.5, -1.75);
+  group.add(back);
+
+  const hangerGeo = new THREE.CylinderGeometry(0.2, 0.2, 11.0, 4);
+  const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
+  const hanger = new THREE.Mesh(hangerGeo, hangerMat);
+  hanger.position.y = -4.5;
+  group.add(hanger);
+
+  return group;
+}
 
 // -- Tower geometry (dynamic height) --
 function createTowerGeometry(height = 12) {
@@ -131,51 +200,6 @@ function createTowerGeometry(height = 12) {
   sheaveR.rotation.z = Math.PI / 2;
   sheaveR.position.set(9, height + 1.0, 0);
   group.add(sheaveR);
-
-  return group;
-}
-
-// -- Chair geometry --
-function createChairGeometry(type, color) {
-  const group = new THREE.Group();
-
-  if (type === 'gondola') {
-    const cabinGeo = new THREE.BoxGeometry(7.5, 11.0, 7.5);
-    const cabinMat = new THREE.MeshStandardMaterial({ color: color || 0xcc2222, metalness: 0.3, roughness: 0.5 });
-    const cabin = new THREE.Mesh(cabinGeo, cabinMat);
-    cabin.position.y = -7.5;
-    cabin.castShadow = true;
-    group.add(cabin);
-
-    const hangerGeo = new THREE.CylinderGeometry(0.25, 0.25, 10, 4);
-    const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
-    const hanger = new THREE.Mesh(hangerGeo, hangerMat);
-    hanger.position.y = -1.0;
-    group.add(hanger);
-  } else {
-    const seatGeo = new THREE.BoxGeometry(12.5, 0.5, 3.5);
-    const seatMat = new THREE.MeshStandardMaterial({ color: color || 0x2244aa, metalness: 0.2, roughness: 0.6 });
-    const seat = new THREE.Mesh(seatGeo, seatMat);
-    seat.position.y = -10.0;
-    seat.castShadow = true;
-    group.add(seat);
-
-    const backGeo = new THREE.BoxGeometry(12.5, 5.0, 0.5);
-    const back = new THREE.Mesh(backGeo, seatMat);
-    back.position.set(0, -7.5, -1.75);
-    group.add(back);
-
-    const hangerGeo = new THREE.CylinderGeometry(0.2, 0.2, 11.0, 4);
-    const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
-    const hanger = new THREE.Mesh(hangerGeo, hangerMat);
-    hanger.position.y = -4.5;
-    group.add(hanger);
-
-    const footGeo = new THREE.BoxGeometry(11.0, 0.25, 1.5);
-    const foot = new THREE.Mesh(footGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
-    foot.position.set(0, -14.0, 1.5);
-    group.add(foot);
-  }
 
   return group;
 }
@@ -262,13 +286,13 @@ function buildLift(def, heightmap, resolution) {
     group.add(tower);
   }
 
-  // Chairs
+  // Chairs (using GLB model)
   const chairs = [];
   const chairSpacing = 150;
   const numChairs = Math.floor(totalLength / chairSpacing);
 
   for (let i = 0; i < numChairs; i++) {
-    const chair = createChairGeometry(def.type, def.color);
+    const chair = createChairFromModel();
     chair.userData.t = i / numChairs;
     chair.userData.direction = i % 2 === 0 ? 1 : -1;
     chairs.push(chair);
@@ -291,7 +315,17 @@ function buildLift(def, heightmap, resolution) {
   };
 }
 
-export function generateLiftSystem(heightmap, resolution) {
+/**
+ * Build the full lift system. Loads the chairlift GLB model first.
+ */
+export async function generateLiftSystem(heightmap, resolution) {
+  // Load the chairlift model before building lifts
+  try {
+    await loadChairliftModel();
+  } catch (err) {
+    console.warn('Failed to load chairlift model, using fallback geometry:', err);
+  }
+
   const mainGroup = new THREE.Group();
   mainGroup.name = 'LiftSystem';
 

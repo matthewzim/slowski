@@ -41,51 +41,29 @@ function setLoadProgress(percent, message) {
 }
 
 // ============================================================
-// MINIMAP - Mountain silhouette based on provided image
+// MINIMAP - Blackcomb Mountain map
 // ============================================================
 
-// The mountain silhouette path (normalized 0-1, traced from the second image)
-// The shape matches the white silhouette with irregular ridges
-const SILHOUETTE_PATH = [
-  // Bottom center (base lodge area)
-  [0.47, 0.95], [0.53, 0.95],
-  // Right base approach
-  [0.56, 0.90], [0.60, 0.85],
-  // Right lower mountain
-  [0.65, 0.78], [0.70, 0.72],
-  // Right mid indent
-  [0.67, 0.66], [0.72, 0.60],
-  // Right upper bump
-  [0.75, 0.52], [0.73, 0.46],
-  // Far right ridge
-  [0.78, 0.38], [0.75, 0.32],
-  // Upper right
-  [0.70, 0.26], [0.65, 0.22],
-  // Near summit right
-  [0.58, 0.16], [0.54, 0.12],
-  // Summit peak
-  [0.50, 0.06], [0.46, 0.05],
-  // Summit left
-  [0.42, 0.08], [0.38, 0.12],
-  // Upper left ridge
-  [0.32, 0.18], [0.28, 0.24],
-  // Left upper bump
-  [0.22, 0.30], [0.25, 0.36],
-  // Left indent
-  [0.20, 0.42], [0.22, 0.48],
-  // Left mid bump
-  [0.18, 0.55], [0.20, 0.62],
-  // Left lower
-  [0.25, 0.68], [0.28, 0.74],
-  // Left base approach
-  [0.32, 0.80], [0.36, 0.85],
-  // Back to bottom
-  [0.40, 0.90], [0.44, 0.94],
-  [0.47, 0.95],
-];
+// -- Minimap background image (Blackcomb Mountain map) --
+let minimapImage = null;
+let minimapImageLoaded = false;
+
+function loadMinimapImage() {
+  const img = new Image();
+  img.onload = () => {
+    minimapImage = img;
+    minimapImageLoaded = true;
+  };
+  img.onerror = () => {
+    console.warn('Could not load minimap image (blackcomb-map.png), using terrain fallback');
+    minimapImageLoaded = false;
+  };
+  img.src = 'blackcomb-map.png';
+}
 
 /**
- * Draw the constant white mountain silhouette minimap.
+ * Draw the minimap with the Blackcomb Mountain map as background.
+ * Falls back to terrain-based rendering if image not available.
  */
 function drawMinimapSilhouette(playerX, playerZ) {
   const canvas = document.getElementById('minimap-canvas');
@@ -96,38 +74,34 @@ function drawMinimapSilhouette(playerX, playerZ) {
 
   ctx.clearRect(0, 0, w, h);
 
-  // Dark background
-  ctx.fillStyle = 'rgba(20, 25, 40, 0.85)';
-  ctx.fillRect(0, 0, w, h);
-
-  // Draw white mountain silhouette
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-  ctx.beginPath();
-  for (let i = 0; i < SILHOUETTE_PATH.length; i++) {
-    const px = SILHOUETTE_PATH[i][0] * w;
-    const py = SILHOUETTE_PATH[i][1] * h;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
+  if (minimapImageLoaded && minimapImage) {
+    // Draw the map image as background
+    ctx.drawImage(minimapImage, 0, 0, w, h);
+  } else {
+    // Fallback: draw terrain-based minimap
+    drawMinimapTerrain(ctx, w, h);
   }
-  ctx.closePath();
-  ctx.fill();
 
-  // Draw base lodge triangle (cyan)
-  ctx.fillStyle = 'rgba(80, 200, 220, 0.9)';
-  ctx.beginPath();
-  ctx.moveTo(w * 0.50, h * 0.88);
-  ctx.lineTo(w * 0.46, h * 0.94);
-  ctx.lineTo(w * 0.54, h * 0.94);
-  ctx.closePath();
-  ctx.fill();
+  // Draw lift lines on the minimap
+  for (const def of LIFT_DEFS) {
+    ctx.strokeStyle = 'rgba(220, 40, 40, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < def.points.length; i++) {
+      const px = def.points[i][0] * w;
+      const py = def.points[i][1] * h;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
 
-  // Draw player position on silhouette
+  // Draw player position
   if (player) {
     const { nx, ny } = worldToNormalized(playerX, playerZ);
     const dotX = nx * w;
     const dotY = ny * h;
 
-    // Check if player is within mountain bounds (approximately)
     ctx.fillStyle = '#ff3344';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1.5;
@@ -141,6 +115,56 @@ function drawMinimapSilhouette(playerX, playerZ) {
   ctx.strokeStyle = 'rgba(255,255,255,0.3)';
   ctx.lineWidth = 1;
   ctx.strokeRect(0, 0, w, h);
+}
+
+/**
+ * Fallback terrain-based minimap rendering (Google Maps terrain style).
+ */
+function drawMinimapTerrain(ctx, w, h) {
+  // Dark background
+  ctx.fillStyle = 'rgba(20, 25, 40, 0.85)';
+  ctx.fillRect(0, 0, w, h);
+
+  if (!heightmap) return;
+
+  // Draw terrain with Google Maps-like colors
+  const step = 4;
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const nx = x / w;
+      const ny = y / h;
+      const worldX = (nx - 0.5) * TERRAIN_CONFIG.worldWidth;
+      const worldZ = (ny - 0.5) * TERRAIN_CONFIG.worldDepth;
+      const elev = getHeightAt(worldX, worldZ, heightmap, resolution);
+
+      if (elev <= 1) continue; // Skip flat/empty areas
+
+      // Google Maps terrain color scheme
+      const t = Math.min(elev / 1800, 1.0);
+      let r, g, b;
+      if (t < 0.3) {
+        // Low elevation: green
+        r = Math.floor(120 + t * 80);
+        g = Math.floor(160 + t * 60);
+        b = Math.floor(90 + t * 40);
+      } else if (t < 0.6) {
+        // Mid elevation: tan/beige
+        const mt = (t - 0.3) / 0.3;
+        r = Math.floor(160 + mt * 60);
+        g = Math.floor(175 + mt * 40);
+        b = Math.floor(120 + mt * 40);
+      } else {
+        // High elevation: light gray/white (snow)
+        const ht = (t - 0.6) / 0.4;
+        r = Math.floor(210 + ht * 40);
+        g = Math.floor(215 + ht * 35);
+        b = Math.floor(200 + ht * 45);
+      }
+
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fillRect(x, y, step, step);
+    }
+  }
 }
 
 // -- Expanded Trail Map --
@@ -327,7 +351,7 @@ function createBaseVillage(heightmap, resolution) {
   const group = new THREE.Group();
   group.name = 'BaseVillage';
 
-  const { x: villageX, z: villageZ } = normalizedToWorld(0.48, 0.10);
+  const { x: villageX, z: villageZ } = normalizedToWorld(0.10, 0.10);
   const villageY = getHeightAt(villageX, villageZ, heightmap, resolution);
 
   // Main lodge
@@ -519,6 +543,7 @@ function initScene() {
 // -- Main initialization --
 async function init() {
   setLoadProgress(5, 'Initializing renderer...');
+  loadMinimapImage();
   initScene();
 
   setLoadProgress(10, 'Loading terrain model...');
@@ -537,7 +562,7 @@ async function init() {
   setLoadProgress(84, 'Building chairlifts...');
   await nextFrame();
 
-  const liftSystem = generateLiftSystem(heightmap, resolution);
+  const liftSystem = await generateLiftSystem(heightmap, resolution);
   scene.add(liftSystem.group);
   lifts = liftSystem.lifts;
 
