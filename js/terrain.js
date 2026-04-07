@@ -61,8 +61,10 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
 
   if (onProgress) onProgress(30, 'Processing terrain geometry...');
 
-  // Find all meshes in the loaded scene
+  // Find all meshes in the loaded scene and remove stray objects (e.g. unit
+  // cubes with huge translations) that would blow up the bounding box.
   const meshes = [];
+  const toRemove = [];
   gltf.scene.traverse((child) => {
     if (child.isMesh) {
       meshes.push(child);
@@ -71,6 +73,22 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
 
   if (meshes.length === 0) {
     throw new Error('No meshes found in GLB file');
+  }
+
+  // Identify meshes that are stray artifacts (tiny geometry far from origin)
+  for (const m of meshes) {
+    const geoBbox = m.geometry.boundingBox || (() => { m.geometry.computeBoundingBox(); return m.geometry.boundingBox; })();
+    const geoSize = new THREE.Vector3();
+    geoBbox.getSize(geoSize);
+    const maxDim = Math.max(geoSize.x, geoSize.y, geoSize.z);
+    // If the mesh's own geometry is tiny (< 10 units), it's likely an artifact
+    if (maxDim < 10) {
+      toRemove.push(m);
+    }
+  }
+
+  for (const m of toRemove) {
+    m.removeFromParent();
   }
 
   // Merge everything into a single group and compute its bounding box
