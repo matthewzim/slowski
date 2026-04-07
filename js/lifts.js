@@ -85,8 +85,10 @@ export const LIFT_DEFS = [
   },
 ];
 
-// -- Chairlift GLB model cache --
+// -- GLB model caches --
 let chairliftModelTemplate = null;
+let liftPoleModelTemplate = null;
+let liftBaseModelTemplate = null;
 
 /**
  * Load the 1379_chairlift.glb model for use as chair geometry.
@@ -131,6 +133,94 @@ async function loadChairliftModel() {
 
   chairliftModelTemplate = wrapper;
   return wrapper;
+}
+
+/**
+ * Load the ski_lift_pole.glb model for lift towers.
+ * Normalized to 1 unit tall with bottom at y=0.
+ */
+async function loadLiftPoleModel() {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load('ski_lift_pole.glb', resolve, undefined, reject);
+  });
+
+  const model = gltf.scene;
+  const bbox = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+
+  // Normalize to 1 unit tall
+  const scaleFactor = 1.0 / Math.max(size.y, 0.01);
+  model.scale.multiplyScalar(scaleFactor);
+
+  // Position so bottom is at y=0, centered horizontally
+  model.position.set(
+    -center.x * scaleFactor,
+    -bbox.min.y * scaleFactor,
+    -center.z * scaleFactor
+  );
+
+  model.traverse((child) => {
+    if (child.isMesh) child.castShadow = true;
+  });
+
+  const wrapper = new THREE.Group();
+  wrapper.add(model);
+  liftPoleModelTemplate = wrapper;
+}
+
+/**
+ * Load the ski_lift_base.glb model for top/bottom stations.
+ * Scaled to a reasonable station size with bottom at y=0.
+ */
+async function loadLiftBaseModel() {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load('ski_lift_base.glb', resolve, undefined, reject);
+  });
+
+  const model = gltf.scene;
+  const bbox = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+
+  // Scale to ~40 units tall for a lift base station
+  const targetHeight = 40;
+  const scaleFactor = targetHeight / Math.max(size.y, 0.01);
+  model.scale.multiplyScalar(scaleFactor);
+
+  // Position so bottom is at y=0, centered horizontally
+  model.position.set(
+    -center.x * scaleFactor,
+    -bbox.min.y * scaleFactor,
+    -center.z * scaleFactor
+  );
+
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  const wrapper = new THREE.Group();
+  wrapper.add(model);
+  liftBaseModelTemplate = wrapper;
+}
+
+/**
+ * Create a tower from the GLB pole model, scaled to the desired height.
+ */
+function createTowerFromModel(height) {
+  const tower = liftPoleModelTemplate.clone();
+  // Template is 1 unit tall; scale uniformly to desired height
+  tower.scale.setScalar(height);
+  return tower;
 }
 
 /**
@@ -276,7 +366,9 @@ function buildLift(def, heightmap, resolution) {
 
     if (towerHeight < 2) continue;
 
-    const tower = createTowerGeometry(towerHeight);
+    const tower = liftPoleModelTemplate
+      ? createTowerFromModel(towerHeight)
+      : createTowerGeometry(towerHeight);
     tower.position.set(cablePos.x, terrainY, cablePos.z);
 
     const tangent = correctedCurve.getTangentAt(t);
@@ -299,6 +391,26 @@ function buildLift(def, heightmap, resolution) {
     group.add(chair);
   }
 
+  // Base stations (top and bottom)
+  if (liftBaseModelTemplate) {
+    // Bottom station
+    const bottomBase = liftBaseModelTemplate.clone();
+    const bottomTerrainY = getHeightAt(densePoints[0].x, densePoints[0].z, heightmap, resolution);
+    bottomBase.position.set(densePoints[0].x, bottomTerrainY, densePoints[0].z);
+    const tangentBottom = correctedCurve.getTangentAt(0);
+    bottomBase.rotation.y = Math.atan2(tangentBottom.x, tangentBottom.z);
+    group.add(bottomBase);
+
+    // Top station
+    const topBase = liftBaseModelTemplate.clone();
+    const lastPt = densePoints[densePoints.length - 1];
+    const topTerrainY = getHeightAt(lastPt.x, lastPt.z, heightmap, resolution);
+    topBase.position.set(lastPt.x, topTerrainY, lastPt.z);
+    const tangentTop = correctedCurve.getTangentAt(1);
+    topBase.rotation.y = Math.atan2(tangentTop.x, tangentTop.z);
+    group.add(topBase);
+  }
+
   const bottomPoint = densePoints[0].clone();
 
   return {
@@ -319,12 +431,13 @@ function buildLift(def, heightmap, resolution) {
  * Build the full lift system. Loads the chairlift GLB model first.
  */
 export async function generateLiftSystem(heightmap, resolution) {
-  // Load the chairlift model before building lifts
-  try {
-    await loadChairliftModel();
-  } catch (err) {
-    console.warn('Failed to load chairlift model, using fallback geometry:', err);
-  }
+  // Load all lift models in parallel before building lifts
+  const modelLoaders = [
+    loadChairliftModel().catch(err => console.warn('Failed to load chairlift model:', err)),
+    loadLiftPoleModel().catch(err => console.warn('Failed to load lift pole model:', err)),
+    loadLiftBaseModel().catch(err => console.warn('Failed to load lift base model:', err)),
+  ];
+  await Promise.all(modelLoaders);
 
   const mainGroup = new THREE.Group();
   mainGroup.name = 'LiftSystem';

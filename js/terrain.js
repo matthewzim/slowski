@@ -144,8 +144,35 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
 }
 
 /**
- * Build a heightmap by reading vertex positions directly from the mesh
- * geometry. This is O(vertices) instead of O(resolution² × triangles).
+ * Get the Y coordinate on a triangle at world position (px, pz)
+ * using barycentric interpolation. Returns null if point is outside triangle.
+ */
+function barycentricY(px, pz, v0, v1, v2) {
+  const e1x = v1.x - v0.x, e1z = v1.z - v0.z;
+  const e2x = v2.x - v0.x, e2z = v2.z - v0.z;
+  const dpx = px - v0.x, dpz = pz - v0.z;
+
+  const d00 = e1x * e1x + e1z * e1z;
+  const d01 = e1x * e2x + e1z * e2z;
+  const d11 = e2x * e2x + e2z * e2z;
+  const d20 = dpx * e1x + dpz * e1z;
+  const d21 = dpx * e2x + dpz * e2z;
+
+  const denom = d00 * d11 - d01 * d01;
+  if (Math.abs(denom) < 1e-10) return null;
+
+  const u = (d11 * d20 - d01 * d21) / denom;
+  const v = (d00 * d21 - d01 * d20) / denom;
+
+  if (u < -0.001 || v < -0.001 || u + v > 1.001) return null;
+
+  return v0.y + u * (v1.y - v0.y) + v * (v2.y - v0.y);
+}
+
+/**
+ * Build a heightmap by rasterizing mesh triangles onto the grid.
+ * For each triangle, we compute the exact surface height at every grid cell
+ * that falls within it, giving pixel-perfect terrain following.
  */
 async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
   const { worldWidth, worldDepth, baseElevation, minElevation } = TERRAIN_CONFIG;
@@ -154,35 +181,62 @@ async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
   heightmap.fill(minElevation);
 
   terrainGroup.updateMatrixWorld(true);
-  const v = new THREE.Vector3();
+  const _v0 = new THREE.Vector3(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
 
-  // Scatter vertex heights onto the grid
+  const toGx = (wx) => ((wx / worldWidth) + 0.5) * (resolution - 1);
+  const toGz = (wz) => ((wz / worldDepth) + 0.5) * (resolution - 1);
+  const toWx = (gx) => (gx / (resolution - 1) - 0.5) * worldWidth;
+  const toWz = (gz) => (gz / (resolution - 1) - 0.5) * worldDepth;
+
+  // Rasterize each triangle onto the heightmap grid
+  let triProcessed = 0;
   terrainGroup.traverse((child) => {
     if (!child.isMesh) return;
-    const pos = child.geometry.attributes.position;
+    const geo = child.geometry;
+    const pos = geo.attributes.position;
+    const idx = geo.index;
     const mat = child.matrixWorld;
 
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      v.applyMatrix4(mat);
+    const triCount = idx ? idx.count / 3 : Math.floor(pos.count / 3);
 
-      const gx = ((v.x / worldWidth) + 0.5) * (resolution - 1);
-      const gz = ((v.z / worldDepth) + 0.5) * (resolution - 1);
-      const x0 = Math.floor(gx), z0 = Math.floor(gz);
-      const elevation = v.y + baseElevation;
+    for (let t = 0; t < triCount; t++) {
+      if (idx) {
+        _v0.fromBufferAttribute(pos, idx.getX(t * 3)).applyMatrix4(mat);
+        _v1.fromBufferAttribute(pos, idx.getX(t * 3 + 1)).applyMatrix4(mat);
+        _v2.fromBufferAttribute(pos, idx.getX(t * 3 + 2)).applyMatrix4(mat);
+      } else {
+        _v0.fromBufferAttribute(pos, t * 3).applyMatrix4(mat);
+        _v1.fromBufferAttribute(pos, t * 3 + 1).applyMatrix4(mat);
+        _v2.fromBufferAttribute(pos, t * 3 + 2).applyMatrix4(mat);
+      }
 
-      // Write to nearest grid cells
-      for (let dz = 0; dz <= 1; dz++) {
-        for (let dx = 0; dx <= 1; dx++) {
-          const cx = x0 + dx, cz = z0 + dz;
-          if (cx < 0 || cx >= resolution || cz < 0 || cz >= resolution) continue;
-          const idx = cz * resolution + cx;
-          if (!filled[idx] || elevation > heightmap[idx]) {
-            heightmap[idx] = elevation;
-            filled[idx] = 1;
+      // Grid bounding box of triangle
+      const gx0 = toGx(_v0.x), gx1 = toGx(_v1.x), gx2 = toGx(_v2.x);
+      const gz0 = toGz(_v0.z), gz1 = toGz(_v1.z), gz2 = toGz(_v2.z);
+
+      const minGx = Math.max(0, Math.floor(Math.min(gx0, gx1, gx2)));
+      const maxGx = Math.min(resolution - 1, Math.ceil(Math.max(gx0, gx1, gx2)));
+      const minGz = Math.max(0, Math.floor(Math.min(gz0, gz1, gz2)));
+      const maxGz = Math.min(resolution - 1, Math.ceil(Math.max(gz0, gz1, gz2)));
+
+      for (let gz = minGz; gz <= maxGz; gz++) {
+        for (let gx = minGx; gx <= maxGx; gx++) {
+          const wx = toWx(gx);
+          const wz = toWz(gz);
+
+          const y = barycentricY(wx, wz, _v0, _v1, _v2);
+          if (y === null) continue;
+
+          const elevation = y + baseElevation;
+          const hIdx = gz * resolution + gx;
+          if (!filled[hIdx] || elevation > heightmap[hIdx]) {
+            heightmap[hIdx] = elevation;
+            filled[hIdx] = 1;
           }
         }
       }
+
+      triProcessed++;
     }
   });
 
@@ -194,8 +248,8 @@ async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
     emptyCount = 0;
     for (let z = 0; z < resolution; z++) {
       for (let x = 0; x < resolution; x++) {
-        const idx = z * resolution + x;
-        if (filled[idx]) continue;
+        const hmIdx = z * resolution + x;
+        if (filled[hmIdx]) continue;
         let sum = 0, count = 0;
         for (let dz = -1; dz <= 1; dz++) {
           for (let dx = -1; dx <= 1; dx++) {
@@ -208,8 +262,8 @@ async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
           }
         }
         if (count > 0) {
-          heightmap[idx] = sum / count;
-          filled[idx] = 1;
+          heightmap[hmIdx] = sum / count;
+          filled[hmIdx] = 1;
         } else {
           emptyCount++;
         }
