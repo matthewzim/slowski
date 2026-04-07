@@ -27,6 +27,7 @@ const PLAYER_CONFIG = {
   // Player dimensions
   height: 1.6,
   radius: 0.3,
+  groundClearance: 0.5, // Extra offset to prevent clipping through visual terrain
 };
 
 export class Player {
@@ -204,7 +205,7 @@ export class Player {
     const startZ = (0.22 - 0.5) * TERRAIN_CONFIG.worldDepth;
     const startY = getHeightAt(startX, startZ, this.heightmap, this.resolution);
 
-    this.position.set(startX, startY, startZ);
+    this.position.set(startX, startY + PLAYER_CONFIG.groundClearance, startZ);
     this.velocity.set(0, 0, 0);
     this.speed = 0;
     this.heading = Math.PI; // Pointing downhill (toward base village)
@@ -226,9 +227,9 @@ export class Player {
   // Skip to top of chairlift
   skipToLiftTop() {
     if (!this.onLift || !this.currentLift) return;
-    const topPoint = this.currentLift.curve.getPointAt(1.0);
+    const topPoint = this.currentLift.curve.getPointAt(0.98);
     const terrainY = getHeightAt(topPoint.x, topPoint.z, this.heightmap, this.resolution);
-    this.position.set(topPoint.x, terrainY, topPoint.z);
+    this.position.set(topPoint.x, terrainY + PLAYER_CONFIG.groundClearance, topPoint.z);
     this.velocity.set(0, 0, 0);
     this.speed = 0;
     this.onLift = false;
@@ -246,7 +247,7 @@ export class Player {
       const speedT = (lift.speed * deltaTime) / lift.totalLength;
       this.liftT += speedT;
 
-      if (this.liftT >= 1.0) {
+      if (this.liftT >= 0.98) {
         // Reached the top
         this.skipToLiftTop();
       } else {
@@ -369,18 +370,19 @@ export class Player {
 
     // -- Ground collision --
     const groundY = getHeightAt(this.position.x, this.position.z, this.heightmap, this.resolution);
+    const gc = PLAYER_CONFIG.groundClearance;
     const heightAboveGround = this.position.y - groundY;
 
-    if (heightAboveGround <= 0) {
+    if (heightAboveGround <= gc) {
       // Below or at ground - snap up
-      this.position.y = groundY;
+      this.position.y = groundY + gc;
       this.onGround = true;
       if (this.velocity.y < 0) {
         this.velocity.y = 0;
       }
-    } else if (this.onGround && heightAboveGround < 2.0) {
+    } else if (this.onGround && heightAboveGround < gc + 2.0) {
       // Was on ground and still close - stay grounded (prevents floating on slopes)
-      this.position.y = groundY;
+      this.position.y = groundY + gc;
       this.onGround = true;
       // Project velocity onto terrain surface so Y doesn't accumulate
       const projDot = this.velocity.dot(terrainNormal);
