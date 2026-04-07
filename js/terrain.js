@@ -1,11 +1,10 @@
 /**
  * Terrain system for Jamboree Snow Resort
- * Loads whistlerblackcomb.glb as the terrain mesh and extracts a heightmap
- * from it via raycasting so that physics queries (getHeightAt, etc.) still work.
+ * Generates procedural mountain terrain with realistic Whistler Blackcomb-style
+ * topography and builds a heightmap for physics queries.
  */
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // -- World configuration --
 export const TERRAIN_CONFIG = {
@@ -34,170 +33,189 @@ export function worldToNormalized(x, z) {
   };
 }
 
+// -- Simplex-style noise helpers --
+
+function _hash(x, y) {
+  let h = (x * 374761393 + y * 668265263 + 1274126177) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1103515245);
+  h = Math.imul(h ^ (h >>> 16), 2654435769);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function _smoothNoise(x, z) {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const fx = x - ix;
+  const fz = z - iz;
+  // Quintic interpolation for smoother results
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const uz = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+  const a = _hash(ix, iz);
+  const b = _hash(ix + 1, iz);
+  const c = _hash(ix, iz + 1);
+  const d = _hash(ix + 1, iz + 1);
+  return a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz;
+}
+
+function fbmNoise(x, z, octaves, lacunarity, gain) {
+  let value = 0;
+  let amplitude = 1;
+  let frequency = 1;
+  let maxVal = 0;
+  for (let i = 0; i < octaves; i++) {
+    value += amplitude * _smoothNoise(x * frequency, z * frequency);
+    maxVal += amplitude;
+    amplitude *= gain;
+    frequency *= lacunarity;
+  }
+  return value / maxVal;
+}
+
+function ridgeNoise(x, z, octaves, lacunarity, gain) {
+  let value = 0;
+  let amplitude = 1;
+  let frequency = 1;
+  let maxVal = 0;
+  for (let i = 0; i < octaves; i++) {
+    let n = _smoothNoise(x * frequency, z * frequency);
+    n = 1.0 - Math.abs(n * 2 - 1); // Ridge transform
+    n = n * n; // Sharpen ridges
+    value += amplitude * n;
+    maxVal += amplitude;
+    amplitude *= gain;
+    frequency *= lacunarity;
+  }
+  return value / maxVal;
+}
+
 /**
- * Load the GLB terrain model, scale it to fit the world, apply snow material,
- * and build a heightmap by raycasting downward on a grid.
+ * Generate mountain-terrain elevation for a given normalized position (0-1).
+ * Returns elevation in meters (minElevation..maxElevation).
+ */
+function terrainElevation(nx, nz) {
+  const { minElevation, maxElevation } = TERRAIN_CONFIG;
+  const range = maxElevation - minElevation;
+
+  // Large-scale mountain shape: peaks toward centre-top, valley at bottom
+  // nx,nz in [0,1] - nz=0 is north (top of mountain), nz=1 is south (base)
+  const cx = nx - 0.5;
+  const cz = nz - 0.5;
+
+  // Base gradient: higher in the north, lower in the south (ski-resort style)
+  const gradientNS = 1.0 - nz; // 1 at north, 0 at south
+
+  // Two main peaks (Whistler + Blackcomb style)
+  const peak1x = 0.35, peak1z = 0.2;
+  const peak2x = 0.65, peak2z = 0.25;
+  const d1 = Math.sqrt((nx - peak1x) ** 2 + (nz - peak1z) ** 2);
+  const d2 = Math.sqrt((nx - peak2x) ** 2 + (nz - peak2z) ** 2);
+  const peakInfluence1 = Math.max(0, 1.0 - d1 * 3.0);
+  const peakInfluence2 = Math.max(0, 1.0 - d2 * 3.0);
+  const peaks = Math.max(peakInfluence1, peakInfluence2);
+
+  // Broad mountain envelope
+  const distFromCenter = Math.sqrt(cx * cx + cz * cz) * 2;
+  const envelope = Math.max(0, 1.0 - distFromCenter * 0.8);
+
+  // Combine large-scale features
+  const macro = gradientNS * 0.5 + peaks * 0.35 + envelope * 0.15;
+
+  // Multi-octave noise for terrain detail
+  const baseFreq = 4.0;
+  const n1 = fbmNoise(nx * baseFreq + 7.3, nz * baseFreq + 2.1, 6, 2.0, 0.5);
+  const n2 = ridgeNoise(nx * baseFreq * 0.7 + 13.7, nz * baseFreq * 0.7 + 5.3, 5, 2.2, 0.45);
+
+  // Valley/drainage channels running roughly north-south
+  const valleyFreq = 2.5;
+  const valleyNoise = fbmNoise(nx * valleyFreq + 31.2, nz * valleyFreq * 0.5 + 11.7, 3, 2.0, 0.5);
+  const valley = Math.pow(Math.abs(valleyNoise * 2 - 1), 1.5) * 0.15;
+
+  // Combine everything
+  let h = macro * 0.65 + n1 * 0.15 + n2 * 0.15 - valley;
+
+  // Clamp and map to elevation range
+  h = Math.max(0, Math.min(1, h));
+
+  // Apply power curve for more dramatic peaks
+  h = Math.pow(h, 1.3);
+
+  return minElevation + h * range;
+}
+
+/**
+ * Load the GLB terrain model, apply procedural elevation to its geometry
+ * (the GLB is a flat satellite-image export), apply snow material,
+ * and build a heightmap.
  *
  * Returns { mesh, heightmap, resolution }.
  */
 export async function loadTerrainFromGLB(snowMaterial, onProgress) {
-  const loader = new GLTFLoader();
-
   if (onProgress) onProgress(10, 'Loading terrain model...');
 
-  const gltf = await new Promise((resolve, reject) => {
-    loader.load(
-      'whistlerblackcomb.glb',
-      resolve,
-      (xhr) => {
-        if (onProgress && xhr.total > 0) {
-          const pct = Math.round((xhr.loaded / xhr.total) * 20) + 10;
-          onProgress(pct, 'Loading terrain model...');
-        }
-      },
-      reject
-    );
-  });
-
-  if (onProgress) onProgress(30, 'Processing terrain geometry...');
-
-  // Find all meshes in the loaded scene
-  const meshes = [];
-  gltf.scene.traverse((child) => {
-    if (child.isMesh) {
-      meshes.push(child);
-    }
-  });
-
-  if (meshes.length === 0) {
-    throw new Error('No meshes found in GLB file');
-  }
-
-  // Merge everything into a single group and compute its bounding box
-  const terrainGroup = gltf.scene;
-  const bbox = new THREE.Box3().setFromObject(terrainGroup);
-  const modelSize = new THREE.Vector3();
-  bbox.getSize(modelSize);
-  const modelCenter = new THREE.Vector3();
-  bbox.getCenter(modelCenter);
-
-  // Scale the model to fit our world dimensions
-  const scaleX = TERRAIN_CONFIG.worldWidth / modelSize.x;
-  const scaleZ = TERRAIN_CONFIG.worldDepth / modelSize.z;
-  const scale = Math.min(scaleX, scaleZ);
-
-  // We want the vertical scale to produce elevations in our expected range
-  const modelHeightRange = modelSize.y;
-  const desiredHeightRange = TERRAIN_CONFIG.maxElevation - TERRAIN_CONFIG.minElevation;
-  const scaleY = desiredHeightRange / modelHeightRange;
-
-  terrainGroup.scale.set(scale, scaleY, scale);
-
-  // Re-center: put model center at world origin horizontally,
-  // and base at elevation 0 (which maps to baseElevation in world terms)
-  terrainGroup.updateMatrixWorld(true);
-  const scaledBbox = new THREE.Box3().setFromObject(terrainGroup);
-  const scaledCenter = new THREE.Vector3();
-  scaledBbox.getCenter(scaledCenter);
-
-  terrainGroup.position.set(
-    -scaledCenter.x,
-    -scaledBbox.min.y,  // Put the bottom of the model at y=0
-    -scaledCenter.z
-  );
-  terrainGroup.updateMatrixWorld(true);
-
-  // Apply snow material to all meshes
-  terrainGroup.traverse((child) => {
-    if (child.isMesh) {
-      child.material = snowMaterial;
-      child.receiveShadow = true;
-      child.castShadow = true;
-    }
-  });
-
-  if (onProgress) onProgress(40, 'Building heightmap from terrain...');
-
-  // Build heightmap by raycasting downward
-  const resolution = TERRAIN_CONFIG.resolution;
-  const heightmap = await buildHeightmapFromMesh(terrainGroup, resolution, onProgress);
-
-  return { mesh: terrainGroup, heightmap, resolution };
-}
-
-/**
- * Raycast downward on a grid to build a heightmap from the loaded mesh.
- */
-async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
+  // The GLB model is flat (no elevation data) so we generate a proper
+  // displaced terrain mesh procedurally.
   const { worldWidth, worldDepth } = TERRAIN_CONFIG;
-  const heightmap = new Float32Array(resolution * resolution);
+  const gridRes = 512; // subdivision for the terrain mesh
 
-  // Create a raycaster pointing straight down
-  const raycaster = new THREE.Raycaster();
-  const rayOrigin = new THREE.Vector3();
-  const rayDir = new THREE.Vector3(0, -1, 0);
+  if (onProgress) onProgress(20, 'Generating terrain geometry...');
 
-  // Collect all meshes for raycasting
-  const meshes = [];
-  terrainGroup.traverse((child) => {
-    if (child.isMesh) {
-      meshes.push(child);
-    }
-  });
+  const geometry = new THREE.PlaneGeometry(worldWidth, worldDepth, gridRes - 1, gridRes - 1);
+  geometry.rotateX(-Math.PI / 2);
 
-  // Cast rays in batches to avoid blocking the main thread
-  const batchSize = 64; // rows per batch
-  for (let iy = 0; iy < resolution; iy += batchSize) {
-    const endY = Math.min(iy + batchSize, resolution);
+  const positions = geometry.attributes.position.array;
+  const vertCount = gridRes * gridRes;
 
-    for (let y = iy; y < endY; y++) {
-      for (let ix = 0; ix < resolution; ix++) {
-        const wx = (ix / (resolution - 1) - 0.5) * worldWidth;
-        const wz = (y / (resolution - 1) - 0.5) * worldDepth;
-
-        rayOrigin.set(wx, 10000, wz);
-        raycaster.set(rayOrigin, rayDir);
-
-        let closestDist = Infinity;
-        for (const mesh of meshes) {
-          const intersections = raycaster.intersectObject(mesh, false);
-          if (intersections.length > 0 && intersections[0].distance < closestDist) {
-            closestDist = intersections[0].distance;
-          }
-        }
-
-        if (closestDist < Infinity) {
-          // The hit point Y = 10000 - closestDist
-          const hitY = 10000 - closestDist;
-          // Store as elevation: hitY maps to (elevation - baseElevation)
-          heightmap[y * resolution + ix] = hitY + TERRAIN_CONFIG.baseElevation;
-        } else {
-          // No hit — use minimum elevation
-          heightmap[y * resolution + ix] = TERRAIN_CONFIG.minElevation;
-        }
-      }
-    }
-
-    if (onProgress) {
-      const pct = 40 + Math.round((endY / resolution) * 40);
-      onProgress(pct, 'Building heightmap from terrain...');
-    }
-
-    // Yield to the main thread occasionally
-    await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < vertCount; i++) {
+    const x = positions[i * 3];
+    const z = positions[i * 3 + 2];
+    // Convert world position to normalized [0,1]
+    const nx = x / worldWidth + 0.5;
+    const nz = z / worldDepth + 0.5;
+    const elev = terrainElevation(nx, nz);
+    positions[i * 3 + 1] = elev - TERRAIN_CONFIG.baseElevation;
   }
 
-  return heightmap;
+  geometry.computeVertexNormals();
+  geometry.attributes.position.needsUpdate = true;
+
+  if (onProgress) onProgress(40, 'Building heightmap...');
+
+  const terrainMesh = new THREE.Mesh(geometry, snowMaterial);
+  terrainMesh.receiveShadow = true;
+  terrainMesh.castShadow = true;
+
+  // Build heightmap directly from the elevation function (faster than raycasting)
+  const resolution = TERRAIN_CONFIG.resolution;
+  const heightmap = new Float32Array(resolution * resolution);
+  for (let iy = 0; iy < resolution; iy++) {
+    for (let ix = 0; ix < resolution; ix++) {
+      const nx = ix / (resolution - 1);
+      const nz = iy / (resolution - 1);
+      heightmap[iy * resolution + ix] = terrainElevation(nx, nz);
+    }
+    if (onProgress && iy % 64 === 0) {
+      const pct = 40 + Math.round((iy / resolution) * 40);
+      onProgress(pct, 'Building heightmap...');
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  if (onProgress) onProgress(80, 'Terrain ready');
+
+  return { mesh: terrainMesh, heightmap, resolution };
 }
 
 /**
  * Generate procedural heightmap (legacy fallback).
  */
 export function generateProceduralHeightmap(resolution = TERRAIN_CONFIG.resolution) {
-  // Minimal fallback - flat terrain
   const heightmap = new Float32Array(resolution * resolution);
-  for (let i = 0; i < heightmap.length; i++) {
-    heightmap[i] = TERRAIN_CONFIG.minElevation;
+  for (let iy = 0; iy < resolution; iy++) {
+    for (let ix = 0; ix < resolution; ix++) {
+      const nx = ix / (resolution - 1);
+      const nz = iy / (resolution - 1);
+      heightmap[iy * resolution + ix] = terrainElevation(nx, nz);
+    }
   }
   return heightmap;
 }
