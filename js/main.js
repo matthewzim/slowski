@@ -1,6 +1,6 @@
 /**
- * Whistler Blackcomb Ski Simulator
- * Main entry point - scene setup, game loop, and system integration.
+ * Jamboree Snow Resort - Ski Simulator
+ * Main entry point - scene setup, game loop, minimap, village, and system integration.
  */
 
 import * as THREE from 'three';
@@ -9,11 +9,9 @@ import {
   createTerrainMesh,
   getHeightAt,
   getElevationAt,
-  getElevationFromColor,
   TERRAIN_CONFIG,
-  generateHeightmapFromImage,
-  imageToWorld,
   normalizedToWorld,
+  worldToNormalized,
 } from './terrain.js';
 import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSprayParticles, updateSprayParticles } from './snow.js';
 import { generateLiftSystem, updateLifts, findNearestLiftBottom, LIFT_DEFS } from './lifts.js';
@@ -31,9 +29,8 @@ let snowParticles, sprayParticles;
 let clock;
 let gameTime = 0;
 
-// Input state
 const input = { left: false, right: false, brake: false, skate: false };
-let nearbyLift = null; // Track lift bottom station proximity
+let nearbyLift = null;
 
 // -- Loading progress --
 function setLoadProgress(percent, message) {
@@ -43,8 +40,54 @@ function setLoadProgress(percent, message) {
   if (status) status.textContent = message;
 }
 
-// -- Minimap --
-function drawMinimap(playerX, playerZ, playerHeading) {
+// ============================================================
+// MINIMAP - Mountain silhouette based on provided image
+// ============================================================
+
+// The mountain silhouette path (normalized 0-1, traced from the second image)
+// The shape matches the white silhouette with irregular ridges
+const SILHOUETTE_PATH = [
+  // Bottom center (base lodge area)
+  [0.47, 0.95], [0.53, 0.95],
+  // Right base approach
+  [0.56, 0.90], [0.60, 0.85],
+  // Right lower mountain
+  [0.65, 0.78], [0.70, 0.72],
+  // Right mid indent
+  [0.67, 0.66], [0.72, 0.60],
+  // Right upper bump
+  [0.75, 0.52], [0.73, 0.46],
+  // Far right ridge
+  [0.78, 0.38], [0.75, 0.32],
+  // Upper right
+  [0.70, 0.26], [0.65, 0.22],
+  // Near summit right
+  [0.58, 0.16], [0.54, 0.12],
+  // Summit peak
+  [0.50, 0.06], [0.46, 0.05],
+  // Summit left
+  [0.42, 0.08], [0.38, 0.12],
+  // Upper left ridge
+  [0.32, 0.18], [0.28, 0.24],
+  // Left upper bump
+  [0.22, 0.30], [0.25, 0.36],
+  // Left indent
+  [0.20, 0.42], [0.22, 0.48],
+  // Left mid bump
+  [0.18, 0.55], [0.20, 0.62],
+  // Left lower
+  [0.25, 0.68], [0.28, 0.74],
+  // Left base approach
+  [0.32, 0.80], [0.36, 0.85],
+  // Back to bottom
+  [0.40, 0.90], [0.44, 0.94],
+  [0.47, 0.95],
+];
+
+/**
+ * Draw the constant white mountain silhouette minimap.
+ */
+function drawMinimapSilhouette(playerX, playerZ) {
   const canvas = document.getElementById('minimap-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -53,68 +96,55 @@ function drawMinimap(playerX, playerZ, playerHeading) {
 
   ctx.clearRect(0, 0, w, h);
 
-  // Draw terrain elevation as background
-  const halfWorld = TERRAIN_CONFIG.worldWidth / 2;
-  const scale = w / 200; // 200m radius view
+  // Dark background
+  ctx.fillStyle = 'rgba(20, 25, 40, 0.85)';
+  ctx.fillRect(0, 0, w, h);
 
-  // Background
-  ctx.fillStyle = 'rgba(200, 210, 230, 0.6)';
+  // Draw white mountain silhouette
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.beginPath();
-  ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Simple terrain color based on elevation
-  const step = 10;
-  for (let y = 0; y < h; y += step) {
-    for (let x = 0; x < w; x += step) {
-      const worldX = playerX + (x - w / 2) / scale;
-      const worldZ = playerZ + (y - h / 2) / scale;
-      const elev = getHeightAt(worldX, worldZ, heightmap, resolution);
-      const run = isOnRun(worldX, worldZ);
-
-      if (run) {
-        ctx.fillStyle = 'rgba(220, 230, 255, 0.8)';
-      } else {
-        const brightness = Math.floor(80 + (elev / 1800) * 100);
-        ctx.fillStyle = `rgb(${brightness - 20}, ${brightness + 10}, ${brightness - 10})`;
-      }
-      ctx.fillRect(x, y, step, step);
-    }
+  for (let i = 0; i < SILHOUETTE_PATH.length; i++) {
+    const px = SILHOUETTE_PATH[i][0] * w;
+    const py = SILHOUETTE_PATH[i][1] * h;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
   }
-
-  // Clip to circle
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.beginPath();
-  ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalCompositeOperation = 'source-over';
-
-  // Player indicator
-  ctx.save();
-  ctx.translate(w / 2, h / 2);
-  ctx.rotate(-playerHeading + Math.PI);
-
-  ctx.fillStyle = '#ff3344';
-  ctx.beginPath();
-  ctx.moveTo(0, -6);
-  ctx.lineTo(-4, 4);
-  ctx.lineTo(4, 4);
   ctx.closePath();
   ctx.fill();
 
-  ctx.restore();
-
-  // Border
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 2;
+  // Draw base lodge triangle (cyan)
+  ctx.fillStyle = 'rgba(80, 200, 220, 0.9)';
   ctx.beginPath();
-  ctx.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.moveTo(w * 0.50, h * 0.88);
+  ctx.lineTo(w * 0.46, h * 0.94);
+  ctx.lineTo(w * 0.54, h * 0.94);
+  ctx.closePath();
+  ctx.fill();
+
+  // Draw player position on silhouette
+  if (player) {
+    const { nx, ny } = worldToNormalized(playerX, playerZ);
+    const dotX = nx * w;
+    const dotY = ny * h;
+
+    // Check if player is within mountain bounds (approximately)
+    ctx.fillStyle = '#ff3344';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Subtle border
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, 0, w, h);
 }
 
-// -- Terrain Map (expanded minimap) --
-let terrainMapDrawn = false;
-let liftTopPositions = []; // { name, worldX, worldZ, canvasX, canvasY }
+// -- Expanded Trail Map --
+let liftTopPositions = [];
 
 function drawTerrainMap() {
   const canvas = document.getElementById('terrain-map-canvas');
@@ -122,7 +152,6 @@ function drawTerrainMap() {
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
-  const halfWorld = TERRAIN_CONFIG.worldWidth / 2;
 
   ctx.clearRect(0, 0, w, h);
 
@@ -146,11 +175,17 @@ function drawTerrainMap() {
     }
   }
 
-  // Draw lift lines
+  // Draw lift lines and stations
   liftTopPositions = [];
   for (const def of LIFT_DEFS) {
-    ctx.strokeStyle = 'rgba(220, 50, 50, 0.8)';
-    ctx.lineWidth = 2;
+    // Lift line color based on lift color
+    const liftColor = def.color || 0xff8800;
+    const r = (liftColor >> 16) & 0xff;
+    const g = (liftColor >> 8) & 0xff;
+    const b = liftColor & 0xff;
+
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     for (let i = 0; i < def.points.length; i++) {
       const cx = def.points[i][0] * w;
@@ -159,7 +194,7 @@ function drawTerrainMap() {
     }
     ctx.stroke();
 
-    // Mark top station (last point) with a clickable circle
+    // Top station marker (clickable)
     const topPt = def.points[def.points.length - 1];
     const topCx = topPt[0] * w;
     const topCy = topPt[1] * h;
@@ -167,22 +202,30 @@ function drawTerrainMap() {
 
     liftTopPositions.push({
       name: def.name,
+      number: def.number,
       worldX: topWorldX,
       worldZ: topWorldZ,
       canvasX: topCx,
       canvasY: topCy,
     });
 
-    // Draw top station marker
-    ctx.fillStyle = 'rgba(255, 80, 80, 0.9)';
+    // Draw top station circle
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
     ctx.beginPath();
-    ctx.arc(topCx, topCy, 7, 0, Math.PI * 2);
+    ctx.arc(topCx, topCy, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Draw bottom station marker (smaller)
+    // Lift number label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(def.number), topCx, topCy);
+
+    // Bottom station marker
     const botPt = def.points[0];
     ctx.fillStyle = 'rgba(200, 200, 200, 0.6)';
     ctx.beginPath();
@@ -202,8 +245,6 @@ function drawTerrainMap() {
     ctx.fill();
     ctx.stroke();
   }
-
-  terrainMapDrawn = true;
 }
 
 function setupTerrainMap() {
@@ -238,7 +279,7 @@ function setupTerrainMap() {
     for (const ltp of liftTopPositions) {
       const dx = mx - ltp.canvasX;
       const dy = my - ltp.canvasY;
-      if (dx * dx + dy * dy < 12 * 12) {
+      if (dx * dx + dy * dy < 14 * 14) {
         hoveredLift = ltp;
         break;
       }
@@ -265,8 +306,7 @@ function setupTerrainMap() {
     for (const ltp of liftTopPositions) {
       const dx = mx - ltp.canvasX;
       const dy = my - ltp.canvasY;
-      if (dx * dx + dy * dy < 12 * 12) {
-        // Teleport player to the top of this lift
+      if (dx * dx + dy * dy < 14 * 14) {
         const y = getHeightAt(ltp.worldX, ltp.worldZ, heightmap, resolution);
         player.position.set(ltp.worldX, y, ltp.worldZ);
         player.velocity.set(0, 0, 0);
@@ -279,18 +319,140 @@ function setupTerrainMap() {
   });
 }
 
+// ============================================================
+// BASE VILLAGE
+// ============================================================
+
+function createBaseVillage(heightmap, resolution) {
+  const group = new THREE.Group();
+  group.name = 'BaseVillage';
+
+  const { x: villageX, z: villageZ } = normalizedToWorld(0.48, 0.10);
+  const villageY = getHeightAt(villageX, villageZ, heightmap, resolution);
+
+  // Main lodge
+  const lodgeGeo = new THREE.BoxGeometry(80, 30, 50);
+  const lodgeMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.8 });
+  const lodge = new THREE.Mesh(lodgeGeo, lodgeMat);
+  lodge.position.set(villageX, villageY + 15, villageZ);
+  lodge.castShadow = true;
+  lodge.receiveShadow = true;
+  group.add(lodge);
+
+  // Lodge roof (A-frame)
+  const roofGeo = new THREE.ConeGeometry(55, 20, 4);
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x8B2500, roughness: 0.7 });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  roof.position.set(villageX, villageY + 40, villageZ);
+  roof.rotation.y = Math.PI / 4;
+  roof.castShadow = true;
+  group.add(roof);
+
+  // Smaller buildings around the lodge
+  const buildingDefs = [
+    { dx: -120, dz: 30, w: 40, h: 20, d: 30, color: 0x9B7653 },
+    { dx: 100, dz: -20, w: 35, h: 18, d: 25, color: 0x8B7355 },
+    { dx: -80, dz: -60, w: 30, h: 15, d: 25, color: 0xA0856C },
+    { dx: 60, dz: 50, w: 45, h: 22, d: 30, color: 0x8B6914 },
+    { dx: 150, dz: 40, w: 30, h: 16, d: 20, color: 0x9B8B6C },
+    { dx: -160, dz: -20, w: 25, h: 14, d: 20, color: 0x8B7355 },
+  ];
+
+  for (const bd of buildingDefs) {
+    const bx = villageX + bd.dx;
+    const bz = villageZ + bd.dz;
+    const by = getHeightAt(bx, bz, heightmap, resolution);
+
+    const bGeo = new THREE.BoxGeometry(bd.w, bd.h, bd.d);
+    const bMat = new THREE.MeshStandardMaterial({ color: bd.color, roughness: 0.8 });
+    const building = new THREE.Mesh(bGeo, bMat);
+    building.position.set(bx, by + bd.h / 2, bz);
+    building.castShadow = true;
+    building.receiveShadow = true;
+    group.add(building);
+
+    // Small roof
+    const rGeo = new THREE.ConeGeometry(Math.max(bd.w, bd.d) * 0.6, bd.h * 0.5, 4);
+    const rMat = new THREE.MeshStandardMaterial({ color: 0x6B3A2A, roughness: 0.7 });
+    const r = new THREE.Mesh(rGeo, rMat);
+    r.position.set(bx, by + bd.h + bd.h * 0.25, bz);
+    r.rotation.y = Math.PI / 4;
+    r.castShadow = true;
+    group.add(r);
+  }
+
+  return group;
+}
+
+// ============================================================
+// CLIFF / ROCK FEATURES
+// ============================================================
+
+function createCliffFeatures(heightmap, resolution) {
+  const group = new THREE.Group();
+  group.name = 'Cliffs';
+
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: 0x666677,
+    roughness: 0.95,
+    metalness: 0.1,
+  });
+
+  // Place rock outcrops at steep areas on upper mountain
+  const cliffLocations = [
+    // Upper mountain cliffs
+    { nx: 0.56, ny: 0.82, scale: 1.2 },
+    { nx: 0.58, ny: 0.78, scale: 0.8 },
+    { nx: 0.35, ny: 0.85, scale: 1.0 },
+    // Right side cliffs near lift 4
+    { nx: 0.66, ny: 0.72, scale: 0.9 },
+    { nx: 0.68, ny: 0.68, scale: 0.7 },
+    // Left ridge rocks
+    { nx: 0.25, ny: 0.75, scale: 0.8 },
+    // Summit rocks
+    { nx: 0.45, ny: 0.90, scale: 1.1 },
+    { nx: 0.50, ny: 0.87, scale: 0.9 },
+  ];
+
+  for (const cliff of cliffLocations) {
+    const { x, z } = normalizedToWorld(cliff.nx, cliff.ny);
+    const y = getHeightAt(x, z, heightmap, resolution);
+
+    // Irregular rock formation from multiple boxes
+    const s = cliff.scale * 25;
+    for (let i = 0; i < 3; i++) {
+      const rw = (10 + Math.random() * 20) * s / 25;
+      const rh = (15 + Math.random() * 30) * s / 25;
+      const rd = (8 + Math.random() * 15) * s / 25;
+      const geo = new THREE.BoxGeometry(rw, rh, rd);
+      const rock = new THREE.Mesh(geo, rockMat);
+      rock.position.set(
+        x + (Math.random() - 0.5) * s * 1.5,
+        y + rh / 2 - 5,
+        z + (Math.random() - 0.5) * s * 1.5
+      );
+      rock.rotation.set(
+        (Math.random() - 0.5) * 0.3,
+        Math.random() * Math.PI,
+        (Math.random() - 0.5) * 0.2
+      );
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      group.add(rock);
+    }
+  }
+
+  return group;
+}
+
 // -- Scene setup --
 function initScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xd0ddf0);
-
-  // Fog for distance fade
   scene.fog = new THREE.Fog(0xd0ddf0, 2000, 9000);
 
-  // Camera
   camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 15000);
 
-  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -300,7 +462,6 @@ function initScene() {
   renderer.toneMappingExposure = 1.2;
   document.body.appendChild(renderer.domElement);
 
-  // -- Lighting --
   // Sun
   const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
   sunLight.position.set(1500, 2500, 1000);
@@ -316,15 +477,15 @@ function initScene() {
   sunLight.shadow.bias = -0.001;
   scene.add(sunLight);
 
-  // Ambient (sky fill)
+  // Ambient
   const ambientLight = new THREE.AmbientLight(0x8eaacc, 0.6);
   scene.add(ambientLight);
 
-  // Hemisphere light (sky/ground)
+  // Hemisphere
   const hemiLight = new THREE.HemisphereLight(0xaaccff, 0xd4c5a9, 0.4);
   scene.add(hemiLight);
 
-  // -- Sky gradient (simple mesh behind everything) --
+  // Sky gradient
   const skyGeo = new THREE.SphereGeometry(12500, 16, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -362,53 +523,56 @@ async function init() {
 
   setLoadProgress(15, 'Generating terrain heightmap...');
   resolution = TERRAIN_CONFIG.resolution;
-
-  // Generate heightmap - try loading image first, fall back to procedural
   heightmap = generateProceduralHeightmap(resolution);
 
   setLoadProgress(35, 'Creating terrain mesh...');
   await nextFrame();
 
-  // Create terrain
   const snowMat = createSnowMaterial();
   const terrainMesh = createTerrainMesh(heightmap, resolution, snowMat);
   scene.add(terrainMesh);
 
-  setLoadProgress(45, 'Placing ski runs...');
+  setLoadProgress(42, 'Placing ski runs...');
   await nextFrame();
 
-  // Run visuals (subtle markers)
   const runVisuals = createRunVisuals(heightmap, resolution);
   scene.add(runVisuals);
 
-  setLoadProgress(55, 'Building chairlifts...');
+  setLoadProgress(50, 'Building chairlifts...');
   await nextFrame();
 
-  // Lift system
   const liftSystem = generateLiftSystem(heightmap, resolution);
   scene.add(liftSystem.group);
   lifts = liftSystem.lifts;
 
-  setLoadProgress(70, 'Growing trees...');
+  setLoadProgress(60, 'Growing trees...');
   await nextFrame();
 
-  // Trees
   const trees = generateTrees(heightmap, resolution);
   scene.add(trees);
+
+  setLoadProgress(72, 'Building base village...');
+  await nextFrame();
+
+  const village = createBaseVillage(heightmap, resolution);
+  scene.add(village);
+
+  setLoadProgress(78, 'Adding cliff features...');
+  await nextFrame();
+
+  const cliffs = createCliffFeatures(heightmap, resolution);
+  scene.add(cliffs);
 
   setLoadProgress(85, 'Setting up player...');
   await nextFrame();
 
-  // Player
   player = new Player(heightmap, resolution);
   scene.add(player.mesh);
   scene.add(player.trailGroup);
 
-  // Camera
   followCam = new FollowCamera(camera, heightmap, resolution);
   followCam.reset(player.position, player.heading);
 
-  // Snow particles
   snowParticles = createSnowParticles();
   scene.add(snowParticles);
 
@@ -418,35 +582,27 @@ async function init() {
   setLoadProgress(95, 'Almost ready...');
   await nextFrame();
 
-  // Update shadow camera to follow player
   const sunLight = scene.children.find(c => c instanceof THREE.DirectionalLight);
   if (sunLight) {
     sunLight.target = player.mesh;
     scene.add(sunLight.target);
   }
 
-  // Input handlers
   setupInput();
-
-  // Terrain map (expanded minimap)
   setupTerrainMap();
 
-  // Resize handler
   window.addEventListener('resize', onResize);
 
   setLoadProgress(100, 'Ready!');
   await nextFrame();
 
-  // Hide loading screen
   setTimeout(() => {
     const loading = document.getElementById('loading');
     if (loading) loading.style.display = 'none';
   }, 300);
 
-  // Expose API
   exposeGameAPI();
 
-  // Start game loop
   clock = new THREE.Clock();
   animate();
 }
@@ -466,11 +622,9 @@ function setupInput() {
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
       case 'KeyE': {
         if (player.onLift) {
-          // Skip to top of lift
           player.skipToLiftTop();
           followCam.reset(player.position, player.heading);
         } else if (nearbyLift) {
-          // Board the nearby lift
           player.boardLift(nearbyLift.lift);
         }
         break;
@@ -500,7 +654,6 @@ function setupInput() {
     }
   });
 
-  // Touch controls for mobile
   let touchStartX = 0;
   window.addEventListener('touchstart', (e) => {
     touchStartX = e.touches[0].clientX;
@@ -548,7 +701,6 @@ function updateHUD(stats) {
     elevEl.textContent = `Elev: ${Math.round(stats.elevation)}m`;
   }
 
-  // Lift prompt
   const liftPrompt = document.getElementById('lift-prompt');
   if (liftPrompt) {
     if (stats.onLift) {
@@ -572,27 +724,21 @@ function animate() {
   const deltaTime = clock.getDelta();
   gameTime += deltaTime;
 
-  // Check lift proximity
   if (!player.onLift) {
     nearbyLift = findNearestLiftBottom(lifts, player.position, 30);
   } else {
     nearbyLift = null;
   }
 
-  // Update player
   const stats = player.update(deltaTime, input, gameTime);
 
-  // Update camera
   followCam.update(player.position, player.heading, player.speed, deltaTime);
 
-  // Update lifts
   updateLifts(lifts, deltaTime);
 
-  // Update snow particles
   updateSnowParticles(snowParticles, player.position, deltaTime);
   updateSprayParticles(sprayParticles, player.position, player.heading, player.speed, deltaTime);
 
-  // Update shadow light to follow player
   const sunLight = scene.children.find(c => c instanceof THREE.DirectionalLight);
   if (sunLight) {
     sunLight.position.set(
@@ -602,34 +748,26 @@ function animate() {
     );
   }
 
-  // Update snow material time
   const terrainMesh = scene.children.find(c => c instanceof THREE.Mesh && c.material.uniforms);
   if (terrainMesh && terrainMesh.material.uniforms.uTime) {
     terrainMesh.material.uniforms.uTime.value = gameTime;
   }
 
-  // Update HUD
   updateHUD(stats);
 
-  // Update minimap (less frequently)
+  // Update minimap silhouette
   minimapTimer += deltaTime;
   if (minimapTimer > 0.2) {
     minimapTimer = 0;
-    drawMinimap(player.position.x, player.position.z, player.heading);
+    drawMinimapSilhouette(player.position.x, player.position.z);
   }
 
-  // Render
   renderer.render(scene, camera);
 }
 
-// -- Exported core functions (for external use / console) --
-
-// Make key functions available globally for testing/debugging
+// -- Exported API --
 function exposeGameAPI() {
   window.gameAPI = {
-    getElevationFromColor,
-    generateHeightmapFromImage,
-    imageToWorld,
     getHeightAt: (x, z) => getHeightAt(x, z, heightmap, resolution),
     isOnRun,
     getElevationAt: (x, z) => getElevationAt(x, z, heightmap, resolution),
