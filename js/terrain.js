@@ -1,125 +1,27 @@
 /**
- * Terrain system for Whistler Blackcomb
- * Generates heightmap from elevation data and creates displaced PlaneGeometry.
+ * Terrain system for Jamboree Snow Resort
+ * Generates heightmap from control points and creates displaced PlaneGeometry.
  *
- * The terrain is based on real elevation data from the Blackcomb Mountain area:
- * - Blackcomb Peak: 2436m
- * - The Spearhead: 2457m
- * - Phalanx Mountain: 2441m
- * - Village base: ~650m
- * - Horstman Glacier: ~2200m
+ * The terrain is based on the Jamboree Snow Resort trail map:
+ * - Summit peak: ~2450m (lifts 6,8,9 top)
+ * - Upper ridges: ~2200-2350m
+ * - Mid-mountain bowls: ~1600-2000m
+ * - Base village: ~680m
+ * - 9 numbered chairlifts
  */
 
 import * as THREE from 'three';
 
-// -- Elevation color legend from heatmap (color → meters) --
-// Colors sampled from the heatmap legend, ordered high to low
-const ELEVATION_LEGEND = [
-  { r: 255, g: 255, b: 255, elevation: 2464 }, // white - highest
-  { r: 255, g: 230, b: 230, elevation: 2348 }, // very light pink
-  { r: 255, g: 200, b: 200, elevation: 2232 }, // light pink
-  { r: 255, g: 170, b: 170, elevation: 2119 }, // pink
-  { r: 255, g: 130, b: 130, elevation: 2007 }, // salmon
-  { r: 255, g: 100, b: 80,  elevation: 1896 }, // orange-red
-  { r: 255, g: 140, b: 50,  elevation: 1787 }, // orange
-  { r: 255, g: 170, b: 30,  elevation: 1680 }, // dark yellow-orange
-  { r: 255, g: 200, b: 50,  elevation: 1575 }, // yellow-orange
-  { r: 255, g: 230, b: 80,  elevation: 1472 }, // yellow
-  { r: 220, g: 240, b: 60,  elevation: 1371 }, // yellow-green
-  { r: 180, g: 230, b: 70,  elevation: 1272 }, // light green
-  { r: 130, g: 210, b: 80,  elevation: 1176 }, // green
-  { r: 80,  g: 190, b: 90,  elevation: 1083 }, // medium green
-  { r: 50,  g: 180, b: 100, elevation: 993  }, // teal-green
-  { r: 40,  g: 190, b: 140, elevation: 907  }, // teal
-  { r: 60,  g: 200, b: 180, elevation: 826  }, // light teal
-  { r: 100, g: 200, b: 220, elevation: 750  }, // light blue
-  { r: 80,  g: 170, b: 230, elevation: 682  }, // blue
-  { r: 60,  g: 130, b: 200, elevation: 631  }, // dark blue - lowest
-];
-
 // -- World configuration --
 export const TERRAIN_CONFIG = {
-  // World dimensions in Three.js units (1 unit ≈ 1 meter)
   worldWidth: 15000,
   worldDepth: 15000,
-  // Heightmap resolution
   resolution: 512,
-  // Elevation range
   minElevation: 630,
   maxElevation: 2470,
-  // The base elevation (sea level offset) - we subtract this so village is near y=0
   baseElevation: 630,
-  // Vertical scale factor
   verticalScale: 1.0,
 };
-
-/**
- * Convert an RGB color to an elevation value using the heatmap legend.
- * Uses nearest-color matching with interpolation.
- */
-export function getElevationFromColor(r, g, b) {
-  let bestDist = Infinity;
-  let bestIdx = 0;
-
-  for (let i = 0; i < ELEVATION_LEGEND.length; i++) {
-    const c = ELEVATION_LEGEND[i];
-    const dr = r - c.r;
-    const dg = g - c.g;
-    const db = b - c.b;
-    const dist = dr * dr + dg * dg + db * db;
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
-  }
-
-  // Try to interpolate with neighbor for smoother results
-  const best = ELEVATION_LEGEND[bestIdx];
-  const bestD = Math.sqrt(bestDist);
-
-  if (bestD < 5) return best.elevation;
-
-  // Find second best for interpolation
-  let secondIdx = bestIdx > 0 ? bestIdx - 1 : bestIdx + 1;
-  if (secondIdx >= ELEVATION_LEGEND.length) secondIdx = ELEVATION_LEGEND.length - 1;
-
-  const second = ELEVATION_LEGEND[secondIdx];
-  const dr2 = r - second.r, dg2 = g - second.g, db2 = b - second.b;
-  const secondD = Math.sqrt(dr2 * dr2 + dg2 * dg2 + db2 * db2);
-
-  const total = bestD + secondD;
-  if (total < 0.001) return best.elevation;
-
-  const t = bestD / total;
-  return best.elevation * (1 - t) + second.elevation * t;
-}
-
-/**
- * Generate a heightmap array from an image element (heatmap).
- * Returns Float32Array of dimensions resolution x resolution.
- */
-export function generateHeightmapFromImage(image, resolution = 256) {
-  const canvas = document.createElement('canvas');
-  canvas.width = resolution;
-  canvas.height = resolution;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(image, 0, 0, resolution, resolution);
-  const imageData = ctx.getImageData(0, 0, resolution, resolution);
-  const data = imageData.data;
-
-  const heightmap = new Float32Array(resolution * resolution);
-
-  for (let i = 0; i < resolution * resolution; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    heightmap[i] = getElevationFromColor(r, g, b);
-  }
-
-  return heightmap;
-}
-
-// -- Procedural terrain generation based on reference data --
 
 // Simple 2D noise implementation
 function hash(x, y) {
@@ -166,49 +68,70 @@ function fbm(x, y, octaves = 6) {
 }
 
 /**
- * Control points for the Blackcomb terrain.
- * Coordinates are in normalized space (0-1) matching the heatmap image.
- * Format: { nx, ny, elevation, radius, falloff }
+ * Control points for the Jamboree Snow Resort terrain.
+ * Coordinates are in normalized space (0-1).
+ * ny=0 is the bottom (base village), ny=1 is the top (summit).
  */
 const CONTROL_POINTS = [
-  // Blackcomb Peak (south-center of map)
-  { nx: 0.45, ny: 0.88, elevation: 2436, radius: 0.15, falloff: 1.2 },
-  // The Spearhead (south-east)
-  { nx: 0.55, ny: 0.82, elevation: 2457, radius: 0.12, falloff: 1.0 },
-  // Phalanx Mountain (east)
-  { nx: 0.65, ny: 0.55, elevation: 2441, radius: 0.12, falloff: 1.1 },
-  // Blackcomb Glacier area
-  { nx: 0.50, ny: 0.70, elevation: 2300, radius: 0.15, falloff: 0.8 },
-  // Horstman Glacier
-  { nx: 0.38, ny: 0.72, elevation: 2200, radius: 0.12, falloff: 0.9 },
-  // Crystal Ridge area (upper mountain)
-  { nx: 0.55, ny: 0.35, elevation: 1900, radius: 0.18, falloff: 0.7 },
-  // Mid-mountain (Excelerator area)
-  { nx: 0.35, ny: 0.40, elevation: 1650, radius: 0.15, falloff: 0.6 },
-  // Catskinner area
-  { nx: 0.30, ny: 0.55, elevation: 1500, radius: 0.12, falloff: 0.7 },
-  // 7th Heaven area
-  { nx: 0.60, ny: 0.65, elevation: 2100, radius: 0.15, falloff: 0.8 },
-  // Spearhead Glacier (far east)
-  { nx: 0.80, ny: 0.60, elevation: 2200, radius: 0.18, falloff: 1.0 },
-  // Village base area (northwest)
-  { nx: 0.08, ny: 0.12, elevation: 670, radius: 0.12, falloff: 0.5 },
-  // Blackcomb base
-  { nx: 0.10, ny: 0.18, elevation: 680, radius: 0.10, falloff: 0.5 },
-  // Lower mountain transition
-  { nx: 0.20, ny: 0.25, elevation: 1100, radius: 0.15, falloff: 0.6 },
-  // Decker Glacier (far southeast)
-  { nx: 0.85, ny: 0.90, elevation: 2100, radius: 0.15, falloff: 1.0 },
-  // Ridge between peaks
-  { nx: 0.50, ny: 0.78, elevation: 2350, radius: 0.10, falloff: 1.0 },
-  // Northwest slopes
-  { nx: 0.15, ny: 0.35, elevation: 1200, radius: 0.12, falloff: 0.6 },
-  // Glacier Express top
-  { nx: 0.55, ny: 0.50, elevation: 1850, radius: 0.10, falloff: 0.7 },
+  // === Summit & Upper Mountain ===
+  // Main summit peak (lifts 6,8,9 top)
+  { nx: 0.42, ny: 0.88, elevation: 2450, radius: 0.10, falloff: 1.3 },
+  // Summit ridge extending right
+  { nx: 0.52, ny: 0.86, elevation: 2380, radius: 0.08, falloff: 1.1 },
+  // Secondary summit bump
+  { nx: 0.36, ny: 0.92, elevation: 2350, radius: 0.07, falloff: 1.2 },
+  // Upper cliff face (steep area between summit and upper-right)
+  { nx: 0.56, ny: 0.82, elevation: 2320, radius: 0.06, falloff: 1.4 },
+
+  // === Upper Ridges ===
+  // Upper right ridge (lift 4 top area)
+  { nx: 0.62, ny: 0.76, elevation: 2280, radius: 0.12, falloff: 1.0 },
+  // Upper left ridge
+  { nx: 0.28, ny: 0.78, elevation: 2150, radius: 0.10, falloff: 0.9 },
+  // Lift 6/8/9 bottom station area
+  { nx: 0.43, ny: 0.73, elevation: 2080, radius: 0.10, falloff: 0.8 },
+
+  // === Mid-Mountain ===
+  // Center bowl (lift 7 top area)
+  { nx: 0.48, ny: 0.63, elevation: 1950, radius: 0.14, falloff: 0.8 },
+  // Right shoulder (lift 2 top area)
+  { nx: 0.72, ny: 0.56, elevation: 1800, radius: 0.12, falloff: 0.8 },
+  // Left shoulder (lift 5 top area)
+  { nx: 0.18, ny: 0.56, elevation: 1700, radius: 0.12, falloff: 0.7 },
+  // Bowl between center and left
+  { nx: 0.32, ny: 0.60, elevation: 1820, radius: 0.10, falloff: 0.7 },
+  // Right approach ridge
+  { nx: 0.65, ny: 0.48, elevation: 1650, radius: 0.12, falloff: 0.7 },
+
+  // === Lower Mountain ===
+  // Mid-mountain center (lift 7 bottom / lift 1 top)
+  { nx: 0.46, ny: 0.38, elevation: 1350, radius: 0.15, falloff: 0.6 },
+  // Right mid (lift 3 top / lift 2 bottom)
+  { nx: 0.75, ny: 0.32, elevation: 1200, radius: 0.12, falloff: 0.7 },
+  // Left mid (lift 5 bottom area)
+  { nx: 0.12, ny: 0.40, elevation: 1100, radius: 0.10, falloff: 0.6 },
+  // Lower center transition
+  { nx: 0.48, ny: 0.26, elevation: 1000, radius: 0.14, falloff: 0.5 },
+
+  // === Base Area ===
+  // Base village center
+  { nx: 0.48, ny: 0.10, elevation: 680, radius: 0.12, falloff: 0.4 },
+  // Right base (lift 3 bottom)
+  { nx: 0.82, ny: 0.12, elevation: 710, radius: 0.10, falloff: 0.4 },
+  // Left base approach
+  { nx: 0.15, ny: 0.15, elevation: 720, radius: 0.10, falloff: 0.4 },
+
+  // === Edge Lowlands (force low elevation at map edges) ===
+  { nx: 0.05, ny: 0.05, elevation: 640, radius: 0.10, falloff: 0.3 },
+  { nx: 0.95, ny: 0.05, elevation: 640, radius: 0.10, falloff: 0.3 },
+  { nx: 0.05, ny: 0.95, elevation: 700, radius: 0.10, falloff: 0.3 },
+  { nx: 0.95, ny: 0.95, elevation: 700, radius: 0.10, falloff: 0.3 },
+  { nx: 0.95, ny: 0.50, elevation: 660, radius: 0.12, falloff: 0.3 },
+  { nx: 0.05, ny: 0.50, elevation: 660, radius: 0.12, falloff: 0.3 },
 ];
 
 /**
- * Generate procedural heightmap based on Whistler Blackcomb reference data.
+ * Generate procedural heightmap for Jamboree Snow Resort.
  * Returns a Float32Array of resolution*resolution elevation values.
  */
 export function generateProceduralHeightmap(resolution = TERRAIN_CONFIG.resolution) {
@@ -219,8 +142,15 @@ export function generateProceduralHeightmap(resolution = TERRAIN_CONFIG.resoluti
       const nx = ix / (resolution - 1);
       const ny = iy / (resolution - 1);
 
-      // Base elevation gradient: rises from NW to SE
-      let elevation = 650 + (nx + ny) * 0.5 * 900;
+      // Base elevation gradient: rises from bottom to top, centered horizontally
+      let elevation = 650 + ny * 1100;
+
+      // Taper edges to create mountain shape (lower at sides)
+      const distFromCenterX = Math.abs(nx - 0.48);
+      if (distFromCenterX > 0.25) {
+        const taper = (distFromCenterX - 0.25) / 0.25;
+        elevation -= taper * taper * 500;
+      }
 
       // Apply control points using inverse distance weighting
       let totalWeight = 0;
@@ -268,15 +198,30 @@ export function generateProceduralHeightmap(resolution = TERRAIN_CONFIG.resoluti
       const noise2 = fbm(ix * noiseScale * 2.7 + 100, iy * noiseScale * 2.7 + 100, 4);
 
       // Larger features
-      elevation += (noise1 - 0.5) * 180;
+      elevation += (noise1 - 0.5) * 160;
       // Smaller ridges and gullies
-      elevation += (noise2 - 0.5) * 60;
+      elevation += (noise2 - 0.5) * 50;
 
-      // Add some ridge-like features at high elevation
+      // Add ridge-like features at high elevation
       if (elevation > 1800) {
         const ridgeNoise = fbm(ix * 0.02 + 50, iy * 0.02 + 50, 3);
-        const ridgeStrength = Math.min(1, (elevation - 1800) / 400) * 80;
+        const ridgeStrength = Math.min(1, (elevation - 1800) / 400) * 70;
         elevation += (ridgeNoise - 0.5) * ridgeStrength;
+      }
+
+      // Add cliff bands in upper mountain
+      if (elevation > 2000 && elevation < 2300) {
+        const cliffNoise = fbm(ix * 0.03 + 200, iy * 0.005 + 200, 2);
+        if (cliffNoise > 0.55) {
+          elevation += 40; // Sharp step for cliff effect
+        }
+      }
+
+      // Flatten base village area
+      const villageDist = Math.sqrt(Math.pow(nx - 0.48, 2) + Math.pow(ny - 0.10, 2));
+      if (villageDist < 0.06) {
+        const flattenT = 1 - villageDist / 0.06;
+        elevation = elevation * (1 - flattenT * 0.7) + 680 * (flattenT * 0.7);
       }
 
       // Clamp
@@ -322,24 +267,6 @@ function smoothHeightmap(heightmap, resolution, passes) {
 
 // -- Coordinate conversion --
 
-/**
- * Convert image pixel coordinates to world (x, z) coordinates.
- * Image space: (0,0) top-left, (width, height) bottom-right
- * World space: centered on terrain
- */
-export function imageToWorld(xPixel, yPixel, imageWidth = TERRAIN_CONFIG.resolution, imageHeight = TERRAIN_CONFIG.resolution) {
-  const nx = xPixel / imageWidth;
-  const ny = yPixel / imageHeight;
-
-  const x = (nx - 0.5) * TERRAIN_CONFIG.worldWidth;
-  const z = (ny - 0.5) * TERRAIN_CONFIG.worldDepth;
-
-  return { x, z };
-}
-
-/**
- * Convert normalized (0-1) coordinates to world coordinates.
- */
 export function normalizedToWorld(nx, ny) {
   return {
     x: (nx - 0.5) * TERRAIN_CONFIG.worldWidth,
@@ -347,9 +274,6 @@ export function normalizedToWorld(nx, ny) {
   };
 }
 
-/**
- * Convert world coordinates to normalized (0-1) coordinates.
- */
 export function worldToNormalized(x, z) {
   return {
     nx: x / TERRAIN_CONFIG.worldWidth + 0.5,
@@ -359,9 +283,6 @@ export function worldToNormalized(x, z) {
 
 // -- Terrain mesh creation --
 
-/**
- * Create the terrain mesh from a heightmap.
- */
 export function createTerrainMesh(heightmap, resolution, material) {
   const { worldWidth, worldDepth, baseElevation, verticalScale } = TERRAIN_CONFIG;
 
@@ -392,7 +313,6 @@ export function createTerrainMesh(heightmap, resolution, material) {
 export function getHeightAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolution) {
   const { worldWidth, worldDepth, baseElevation, verticalScale } = TERRAIN_CONFIG;
 
-  // Convert world coords to heightmap indices
   const nx = (x / worldWidth + 0.5) * (resolution - 1);
   const ny = (z / worldDepth + 0.5) * (resolution - 1);
 
@@ -418,9 +338,6 @@ export function getHeightAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolut
   return (h - baseElevation) * verticalScale;
 }
 
-/**
- * Get terrain normal at world position.
- */
 export function getNormalAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolution) {
   const delta = TERRAIN_CONFIG.worldWidth / resolution;
   const hL = getHeightAt(x - delta, z, heightmap, resolution);
@@ -433,17 +350,11 @@ export function getNormalAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolut
   return normal;
 }
 
-/**
- * Get slope angle in radians at world position.
- */
 export function getSlopeAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolution) {
   const normal = getNormalAt(x, z, heightmap, resolution);
   return Math.acos(normal.y);
 }
 
-/**
- * Get raw elevation in meters at world position.
- */
 export function getElevationAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolution) {
   return getHeightAt(x, z, heightmap, resolution) + TERRAIN_CONFIG.baseElevation;
 }

@@ -1,29 +1,24 @@
 /**
- * Tree Placement System
+ * Tree Placement System for Jamboree Snow Resort
  * Uses instanced meshes for performance. Places trees based on elevation,
- * slope, and noise, avoiding ski runs.
+ * slope, and position matching the trail map - dense forests on lower portions
+ * and sides, thinning toward treeline, alpine above.
  */
 
 import * as THREE from 'three';
 import { getHeightAt, getSlopeAt, TERRAIN_CONFIG } from './terrain.js';
 import { isOnRun } from './runs.js';
 
-// Tree placement parameters
 const TREE_CONFIG = {
-  maxTrees: 18000,
-  // Elevation bounds for tree placement (treeline)
+  maxTrees: 20000,
   minElevation: 650,
-  maxElevation: 2000, // Above this = alpine, no trees
-  treeline: 1900, // Trees thin out above this
-  // Slope limits (radians)
-  maxSlope: 0.85, // ~49 degrees - too steep for trees
-  // Spacing
-  minSpacing: 40,
-  // Run buffer (extra distance from runs to keep clear)
+  maxElevation: 1950,
+  treeline: 1800,
+  maxSlope: 0.85,
+  minSpacing: 38,
   runBuffer: 50,
 };
 
-// Simple pseudo-random for deterministic placement
 function seededRandom(seed) {
   let s = seed;
   return function() {
@@ -33,54 +28,61 @@ function seededRandom(seed) {
 }
 
 /**
- * Create a stylized low-poly tree mesh (for instancing template).
+ * Check if position is in a heavy-forest zone based on the Jamboree map.
+ * The map shows dense forests on the lower sides and bottom portions.
  */
-function createTreeTemplate() {
-  const group = new THREE.Group();
+function getForestDensity(nx, ny, elevation) {
+  let density = 1.0;
 
-  // Trunk
-  const trunkGeo = new THREE.CylinderGeometry(0.15, 0.25, 2, 5);
-  const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0x4a3520,
-    roughness: 0.9,
-  });
-  const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-  trunk.position.y = 1;
+  // Dense forest in lower-left (lift 5 area)
+  const distLL = Math.sqrt(Math.pow(nx - 0.15, 2) + Math.pow(ny - 0.45, 2));
+  if (distLL < 0.20) density *= 1.5;
 
-  // Foliage layers (3 cones stacked)
-  const foliageMat = new THREE.MeshStandardMaterial({
-    color: 0x1a4a2a,
-    roughness: 0.8,
-  });
+  // Dense forest in lower-right (lift 3 area)
+  const distLR = Math.sqrt(Math.pow(nx - 0.78, 2) + Math.pow(ny - 0.22, 2));
+  if (distLR < 0.18) density *= 1.4;
 
-  const cone1Geo = new THREE.ConeGeometry(2.2, 3.5, 6);
-  const cone1 = new THREE.Mesh(cone1Geo, foliageMat);
-  cone1.position.y = 3.5;
+  // Dense forest flanking the main runs (lower mountain)
+  if (ny < 0.35 && ny > 0.10) {
+    if (nx < 0.38 || nx > 0.58) density *= 1.3;
+  }
 
-  const cone2Geo = new THREE.ConeGeometry(1.7, 3.0, 6);
-  const cone2 = new THREE.Mesh(cone2Geo, foliageMat);
-  cone2.position.y = 5.5;
+  // Forest on left side of mountain
+  if (nx < 0.25 && ny > 0.30 && ny < 0.60) density *= 1.4;
 
-  const cone3Geo = new THREE.ConeGeometry(1.1, 2.5, 6);
-  const cone3 = new THREE.Mesh(cone3Geo, foliageMat);
-  cone3.position.y = 7.2;
+  // Forest on right side of mountain
+  if (nx > 0.65 && ny > 0.25 && ny < 0.50) density *= 1.3;
 
-  // Merge into single geometry for instancing
-  group.add(trunk, cone1, cone2, cone3);
-  return { group, trunkGeo, trunkMat, foliageMat, coneGeos: [cone1Geo, cone2Geo, cone3Geo] };
+  // Less forest in base village area
+  const distVillage = Math.sqrt(Math.pow(nx - 0.48, 2) + Math.pow(ny - 0.10, 2));
+  if (distVillage < 0.08) density *= 0.15;
+
+  // Less forest in alpine zones (center-top of mountain)
+  if (ny > 0.65 && nx > 0.30 && nx < 0.65) {
+    density *= 0.3;
+  }
+
+  // Thin out near treeline
+  if (elevation > TREE_CONFIG.treeline) {
+    density *= 1.0 - (elevation - TREE_CONFIG.treeline) / (TREE_CONFIG.maxElevation - TREE_CONFIG.treeline);
+    density = Math.max(0, density);
+  }
+
+  // No trees above treeline
+  if (elevation > TREE_CONFIG.maxElevation) density = 0;
+
+  // Lower density at very low elevations (flats near village)
+  if (elevation < 730) density *= 0.2;
+
+  return density;
 }
 
-/**
- * Generate tree positions based on terrain data.
- * Returns array of { x, y, z, scale, rotation }.
- */
 function generateTreePositions(heightmap, resolution) {
   const positions = [];
   const rand = seededRandom(42);
   const halfW = TERRAIN_CONFIG.worldWidth / 2;
   const halfD = TERRAIN_CONFIG.worldDepth / 2;
 
-  // Grid-based placement with jitter
   const cellSize = TREE_CONFIG.minSpacing;
   const gridW = Math.floor(TERRAIN_CONFIG.worldWidth / cellSize);
   const gridD = Math.floor(TERRAIN_CONFIG.worldDepth / cellSize);
@@ -89,38 +91,26 @@ function generateTreePositions(heightmap, resolution) {
     for (let gx = 0; gx < gridW; gx++) {
       if (positions.length >= TREE_CONFIG.maxTrees) break;
 
-      // Random jitter within cell
       const x = (gx + rand()) * cellSize - halfW;
       const z = (gz + rand()) * cellSize - halfD;
 
-      // Skip if on a run (with buffer)
+      // Skip if on a run
       if (isOnRun(x, z)) continue;
 
-      // Get terrain data
       const elevation = getHeightAt(x, z, heightmap, resolution) + TERRAIN_CONFIG.baseElevation;
       const slope = getSlopeAt(x, z, heightmap, resolution);
 
-      // Check elevation bounds
       if (elevation < TREE_CONFIG.minElevation || elevation > TREE_CONFIG.maxElevation) continue;
-
-      // Check slope
       if (slope > TREE_CONFIG.maxSlope) continue;
 
-      // Density based on elevation (thin out near treeline)
-      let density = 1.0;
-      if (elevation > TREE_CONFIG.treeline) {
-        density = 1.0 - (elevation - TREE_CONFIG.treeline) / (TREE_CONFIG.maxElevation - TREE_CONFIG.treeline);
-        density = Math.max(0, density);
-      }
-
-      // Lower density at very low elevations (village area)
-      if (elevation < 750) {
-        density *= 0.3;
-      }
+      // Get normalized position for forest density lookup
+      const nx = x / TERRAIN_CONFIG.worldWidth + 0.5;
+      const ny = z / TERRAIN_CONFIG.worldDepth + 0.5;
+      const density = getForestDensity(nx, ny, elevation);
 
       // Use noise for natural clustering
       const noiseVal = rand();
-      if (noiseVal > density * 0.45) continue;
+      if (noiseVal > density * 0.4) continue;
 
       // Tree scale varies with elevation
       const baseScale = 0.6 + rand() * 0.6;
@@ -141,10 +131,6 @@ function generateTreePositions(heightmap, resolution) {
   return positions;
 }
 
-/**
- * Generate the tree system using InstancedMesh for performance.
- * Returns a THREE.Group containing instanced tree meshes.
- */
 export function generateTrees(heightmap, resolution) {
   const positions = generateTreePositions(heightmap, resolution);
   const count = positions.length;
@@ -153,7 +139,6 @@ export function generateTrees(heightmap, resolution) {
     return new THREE.Group();
   }
 
-  // Create instanced meshes for trunk and foliage (5x scale for proportionality)
   const trunkGeo = new THREE.CylinderGeometry(0.75, 1.25, 10, 5);
   const trunkMat = new THREE.MeshStandardMaterial({
     color: 0x4a3520,
@@ -165,7 +150,6 @@ export function generateTrees(heightmap, resolution) {
     roughness: 0.8,
   });
 
-  // We'll use three cone layers merged concept via separate InstancedMeshes (5x scale)
   const cone1Geo = new THREE.ConeGeometry(11.0, 17.5, 6);
   const cone2Geo = new THREE.ConeGeometry(8.5, 15.0, 6);
   const cone3Geo = new THREE.ConeGeometry(5.5, 12.5, 6);
@@ -179,7 +163,6 @@ export function generateTrees(heightmap, resolution) {
   cone1Mesh.castShadow = true;
   cone2Mesh.castShadow = true;
   cone3Mesh.castShadow = true;
-
   trunkMesh.receiveShadow = true;
   cone1Mesh.receiveShadow = true;
 
@@ -188,8 +171,6 @@ export function generateTrees(heightmap, resolution) {
   const quaternion = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   const euler = new THREE.Euler();
-
-  // Color variation
   const color = new THREE.Color();
 
   for (let i = 0; i < count; i++) {
@@ -198,28 +179,23 @@ export function generateTrees(heightmap, resolution) {
     quaternion.setFromEuler(euler);
     const s = tree.scale;
 
-    // Trunk (5x vertical offsets)
     position.set(tree.x, tree.y + 5 * s, tree.z);
     scale.set(s, s, s);
     matrix.compose(position, quaternion, scale);
     trunkMesh.setMatrixAt(i, matrix);
 
-    // Cone 1 (bottom)
     position.set(tree.x, tree.y + 17.5 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone1Mesh.setMatrixAt(i, matrix);
 
-    // Cone 2 (middle)
     position.set(tree.x, tree.y + 27.5 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone2Mesh.setMatrixAt(i, matrix);
 
-    // Cone 3 (top)
     position.set(tree.x, tree.y + 36.0 * s, tree.z);
     matrix.compose(position, quaternion, scale);
     cone3Mesh.setMatrixAt(i, matrix);
 
-    // Slight color variation per tree
     const hue = 0.33 + (Math.random() - 0.5) * 0.05;
     const sat = 0.5 + Math.random() * 0.3;
     const lit = 0.15 + Math.random() * 0.1;

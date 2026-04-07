@@ -1,64 +1,104 @@
 /**
- * Chairlift System for Whistler Blackcomb
+ * Chairlift System for Jamboree Snow Resort
  * Creates terrain-following lift lines with towers, cables, and moving chairs.
  *
- * Lift paths derived from the red lines on the Google Maps reference.
+ * 9 chairlifts matching the Jamboree Snow Resort trail map:
+ * 1 - Base village to lower mid-mountain (green, beginner)
+ * 2 - Right mid to right shoulder (orange)
+ * 3 - Right base to right lower mountain (orange)
+ * 4 - Right center to upper right ridge (orange)
+ * 5 - Left base to left shoulder (green)
+ * 6 - Upper mountain to summit (orange)
+ * 7 - Mid center to center bowl (yellow)
+ * 8 - Upper mountain to summit (orange, parallel to 6)
+ * 9 - Upper mountain to summit (orange, parallel to 6,8)
  */
 
 import * as THREE from 'three';
 import { normalizedToWorld, getHeightAt, TERRAIN_CONFIG } from './terrain.js';
 
 // -- Lift definitions --
-// Each lift is defined by start/end in normalized coords, plus metadata
 export const LIFT_DEFS = [
   {
-    name: 'Excalibur Gondola',
-    points: [[0.06, 0.14], [0.12, 0.20], [0.18, 0.28], [0.24, 0.34]],
+    name: 'Lift 1 - Village Express',
+    number: 1,
+    points: [[0.48, 0.12], [0.47, 0.18], [0.46, 0.26], [0.46, 0.35]],
     type: 'gondola',
     towerSpacing: 400,
     cableHeight: 40,
+    color: 0x44cc44,
   },
   {
-    name: 'Blackcomb Gondola',
-    points: [[0.16, 0.34], [0.22, 0.40], [0.28, 0.48], [0.34, 0.54]],
-    type: 'gondola',
-    towerSpacing: 450,
-    cableHeight: 50,
-  },
-  {
-    name: 'Excelerator Express',
-    points: [[0.30, 0.24], [0.35, 0.30], [0.40, 0.38], [0.44, 0.44]],
+    name: 'Lift 2 - Ridge Runner',
+    number: 2,
+    points: [[0.73, 0.38], [0.72, 0.44], [0.72, 0.50], [0.72, 0.55]],
     type: 'quad',
     towerSpacing: 350,
     cableHeight: 35,
+    color: 0xff8800,
   },
   {
-    name: 'Crystal Ridge Express',
-    points: [[0.52, 0.06], [0.54, 0.12], [0.55, 0.20], [0.56, 0.26]],
-    type: 'quad',
-    towerSpacing: 325,
-    cableHeight: 35,
-  },
-  {
-    name: 'Glacier Express',
-    points: [[0.56, 0.34], [0.58, 0.40], [0.60, 0.46], [0.62, 0.54]],
+    name: 'Lift 3 - East Side Express',
+    number: 3,
+    points: [[0.82, 0.12], [0.80, 0.18], [0.78, 0.24], [0.75, 0.30]],
     type: 'quad',
     towerSpacing: 350,
     cableHeight: 35,
+    color: 0xff8800,
   },
   {
-    name: 'Catskinner Express',
-    points: [[0.22, 0.56], [0.26, 0.52], [0.30, 0.50], [0.36, 0.46], [0.40, 0.44]],
-    type: 'quad',
-    towerSpacing: 325,
-    cableHeight: 30,
-  },
-  {
-    name: '7th Heaven Express',
-    points: [[0.64, 0.58], [0.66, 0.64], [0.68, 0.72], [0.70, 0.82]],
+    name: 'Lift 4 - Summit Rider',
+    number: 4,
+    points: [[0.64, 0.54], [0.63, 0.60], [0.62, 0.68], [0.62, 0.75]],
     type: 'quad',
     towerSpacing: 375,
     cableHeight: 40,
+    color: 0xff8800,
+  },
+  {
+    name: 'Lift 5 - Timberline',
+    number: 5,
+    points: [[0.13, 0.36], [0.14, 0.42], [0.16, 0.48], [0.18, 0.55]],
+    type: 'quad',
+    towerSpacing: 325,
+    cableHeight: 30,
+    color: 0x44cc44,
+  },
+  {
+    name: 'Lift 6 - Peak Express',
+    number: 6,
+    points: [[0.40, 0.73], [0.40, 0.78], [0.41, 0.83], [0.41, 0.88]],
+    type: 'quad',
+    towerSpacing: 350,
+    cableHeight: 35,
+    color: 0xff8800,
+  },
+  {
+    name: 'Lift 7 - Bowl Cruiser',
+    number: 7,
+    points: [[0.46, 0.42], [0.47, 0.48], [0.48, 0.55], [0.48, 0.62]],
+    type: 'quad',
+    towerSpacing: 350,
+    cableHeight: 35,
+    color: 0xffcc00,
+  },
+  {
+    name: 'Lift 8 - Alpine Express',
+    number: 8,
+    points: [[0.44, 0.73], [0.45, 0.78], [0.44, 0.83], [0.43, 0.88]],
+    type: 'quad',
+    towerSpacing: 350,
+    cableHeight: 35,
+    color: 0xff8800,
+  },
+  {
+    name: 'Lift 9 - Glacier Chair',
+    number: 9,
+    points: [[0.48, 0.73], [0.50, 0.78], [0.50, 0.83], [0.49, 0.88]],
+    type: 'quad',
+    towerSpacing: 350,
+    cableHeight: 35,
+    color: 0xff8800,
   },
 ];
 
@@ -66,7 +106,6 @@ export const LIFT_DEFS = [
 function createTowerGeometry(height = 12) {
   const group = new THREE.Group();
 
-  // Main pole - scales to reach cable (5x scale)
   const poleGeo = new THREE.CylinderGeometry(1.5, 2.0, height, 6);
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.7, roughness: 0.3 });
   const pole = new THREE.Mesh(poleGeo, poleMat);
@@ -74,14 +113,12 @@ function createTowerGeometry(height = 12) {
   pole.castShadow = true;
   group.add(pole);
 
-  // Cross arm at top (5x scale)
   const armGeo = new THREE.BoxGeometry(20, 1.5, 1.5);
   const arm = new THREE.Mesh(armGeo, poleMat);
   arm.position.y = height;
   arm.castShadow = true;
   group.add(arm);
 
-  // Sheaves (wheels at top) (5x scale)
   const sheaveGeo = new THREE.CylinderGeometry(2.5, 2.5, 1.0, 8);
   const sheaveMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8, roughness: 0.2 });
 
@@ -99,47 +136,41 @@ function createTowerGeometry(height = 12) {
 }
 
 // -- Chair geometry --
-function createChairGeometry(type) {
+function createChairGeometry(type, color) {
   const group = new THREE.Group();
 
   if (type === 'gondola') {
-    // Gondola cabin (5x scale)
     const cabinGeo = new THREE.BoxGeometry(7.5, 11.0, 7.5);
-    const cabinMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, metalness: 0.3, roughness: 0.5 });
+    const cabinMat = new THREE.MeshStandardMaterial({ color: color || 0xcc2222, metalness: 0.3, roughness: 0.5 });
     const cabin = new THREE.Mesh(cabinGeo, cabinMat);
     cabin.position.y = -7.5;
     cabin.castShadow = true;
     group.add(cabin);
 
-    // Hanger bar (5x scale)
     const hangerGeo = new THREE.CylinderGeometry(0.25, 0.25, 10, 4);
     const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
     const hanger = new THREE.Mesh(hangerGeo, hangerMat);
     hanger.position.y = -1.0;
     group.add(hanger);
   } else {
-    // Quad chair (5x scale)
     const seatGeo = new THREE.BoxGeometry(12.5, 0.5, 3.5);
-    const seatMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.2, roughness: 0.6 });
+    const seatMat = new THREE.MeshStandardMaterial({ color: color || 0x2244aa, metalness: 0.2, roughness: 0.6 });
     const seat = new THREE.Mesh(seatGeo, seatMat);
     seat.position.y = -10.0;
     seat.castShadow = true;
     group.add(seat);
 
-    // Back rest (5x scale)
     const backGeo = new THREE.BoxGeometry(12.5, 5.0, 0.5);
     const back = new THREE.Mesh(backGeo, seatMat);
     back.position.set(0, -7.5, -1.75);
     group.add(back);
 
-    // Hanger (5x scale)
     const hangerGeo = new THREE.CylinderGeometry(0.2, 0.2, 11.0, 4);
     const hangerMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
     const hanger = new THREE.Mesh(hangerGeo, hangerMat);
     hanger.position.y = -4.5;
     group.add(hanger);
 
-    // Foot rest (5x scale)
     const footGeo = new THREE.BoxGeometry(11.0, 0.25, 1.5);
     const foot = new THREE.Mesh(footGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
     foot.position.set(0, -14.0, 1.5);
@@ -151,20 +182,16 @@ function createChairGeometry(type) {
 
 /**
  * Build the full lift line from a definition.
- * Returns { group, chairs, curve, speed } for animation.
  */
 function buildLift(def, heightmap, resolution) {
   const group = new THREE.Group();
   group.name = def.name;
 
-  // Convert waypoints to world space
   const rawWorldPoints = def.points.map(([nx, ny]) => {
     const { x, z } = normalizedToWorld(nx, ny);
     return { x, z };
   });
 
-  // Create a dense set of cable points that follow the terrain properly.
-  // Interpolate between waypoints and ensure cable stays above terrain.
   const densePoints = [];
   const segmentsPerLeg = 20;
 
@@ -180,11 +207,9 @@ function buildLift(def, heightmap, resolution) {
     }
   }
 
-  // Create smooth curve through dense terrain-following points
   const curve = new THREE.CatmullRomCurve3(densePoints, false, 'catmullrom', 0.3);
   const curvePoints = curve.getPoints(200);
 
-  // Enforce minimum clearance on all curve points
   for (const pt of curvePoints) {
     const terrainY = getHeightAt(pt.x, pt.z, heightmap, resolution);
     if (pt.y < terrainY + def.cableHeight * 0.7) {
@@ -192,7 +217,6 @@ function buildLift(def, heightmap, resolution) {
     }
   }
 
-  // Rebuild curve from corrected points for accurate tower/chair placement
   const correctedCurve = new THREE.CatmullRomCurve3(curvePoints, false, 'catmullrom', 0.1);
 
   // Cable line
@@ -201,15 +225,13 @@ function buildLift(def, heightmap, resolution) {
   const cableLine = new THREE.Line(cableGeo, cableMat);
   group.add(cableLine);
 
-  // Second cable (offset perpendicular to cable direction for proper up/down sides)
+  // Return cable (offset perpendicular)
   const returnPoints = curvePoints.map((p, i) => {
-    // Get direction to next point (or from previous) to compute perpendicular
     const next = curvePoints[Math.min(i + 1, curvePoints.length - 1)];
     const prev = curvePoints[Math.max(i - 1, 0)];
     const dx = next.x - prev.x;
     const dz = next.z - prev.z;
     const len = Math.sqrt(dx * dx + dz * dz) || 1;
-    // Perpendicular offset (rotated 90 degrees)
     const perpX = -dz / len * 15;
     const perpZ = dx / len * 15;
     return p.clone().add(new THREE.Vector3(perpX, 0, perpZ));
@@ -218,7 +240,7 @@ function buildLift(def, heightmap, resolution) {
   const returnLine = new THREE.Line(returnGeo, cableMat);
   group.add(returnLine);
 
-  // Place towers with dynamic height to reach the cable
+  // Towers
   const totalLength = correctedCurve.getLength();
   const numTowers = Math.floor(totalLength / def.towerSpacing);
 
@@ -228,13 +250,11 @@ function buildLift(def, heightmap, resolution) {
     const terrainY = getHeightAt(cablePos.x, cablePos.z, heightmap, resolution);
     const towerHeight = cablePos.y - terrainY;
 
-    // Only place tower if it would be reasonably tall
     if (towerHeight < 2) continue;
 
     const tower = createTowerGeometry(towerHeight);
     tower.position.set(cablePos.x, terrainY, cablePos.z);
 
-    // Orient tower to face along the cable
     const tangent = correctedCurve.getTangentAt(t);
     const angle = Math.atan2(tangent.x, tangent.z);
     tower.rotation.y = angle;
@@ -242,39 +262,35 @@ function buildLift(def, heightmap, resolution) {
     group.add(tower);
   }
 
-  // Create chairs along the cable
+  // Chairs
   const chairs = [];
-  const chairSpacing = 150; // meters between chairs (5x scale)
+  const chairSpacing = 150;
   const numChairs = Math.floor(totalLength / chairSpacing);
 
   for (let i = 0; i < numChairs; i++) {
-    const chair = createChairGeometry(def.type);
-    chair.userData.t = i / numChairs; // position along curve (0-1)
-    chair.userData.direction = i % 2 === 0 ? 1 : -1; // alternate up/down
+    const chair = createChairGeometry(def.type, def.color);
+    chair.userData.t = i / numChairs;
+    chair.userData.direction = i % 2 === 0 ? 1 : -1;
     chairs.push(chair);
     group.add(chair);
   }
 
-  // Store bottom station position
   const bottomPoint = densePoints[0].clone();
 
   return {
     group,
     chairs,
     curve: correctedCurve,
-    speed: def.type === 'gondola' ? 9.0 : 7.0, // m/s (doubled)
+    speed: def.type === 'gondola' ? 9.0 : 7.0,
     totalLength,
     type: def.type,
     name: def.name,
+    number: def.number,
     topPoint: densePoints[densePoints.length - 1].clone(),
     bottomPoint,
   };
 }
 
-/**
- * Generate the complete lift system.
- * Returns { group, lifts } where lifts is an array for animation.
- */
 export function generateLiftSystem(heightmap, resolution) {
   const mainGroup = new THREE.Group();
   mainGroup.name = 'LiftSystem';
@@ -290,11 +306,6 @@ export function generateLiftSystem(heightmap, resolution) {
   return { group: mainGroup, lifts };
 }
 
-/**
- * Update chair positions along cables (call each frame).
- * Up-going chairs move from t=0 to t=1 on the main cable.
- * Down-going chairs move from t=1 to t=0 on the offset (return) cable.
- */
 export function updateLifts(lifts, deltaTime) {
   for (const lift of lifts) {
     const speedT = (lift.speed * deltaTime) / lift.totalLength;
@@ -302,7 +313,6 @@ export function updateLifts(lifts, deltaTime) {
     for (const chair of lift.chairs) {
       const isUphill = chair.userData.direction > 0;
 
-      // Move along curve
       if (isUphill) {
         chair.userData.t += speedT;
       } else {
@@ -314,10 +324,8 @@ export function updateLifts(lifts, deltaTime) {
       const t = chair.userData.t;
       const pos = lift.curve.getPointAt(t);
 
-      // Orient chair along cable
       const tangent = lift.curve.getTangentAt(t);
 
-      // Down-going chairs ride on the offset (return) cable
       if (!isUphill) {
         const perpX = -tangent.z;
         const perpZ = tangent.x;
@@ -328,7 +336,6 @@ export function updateLifts(lifts, deltaTime) {
 
       chair.position.copy(pos);
 
-      // Flip rotation for downhill chairs
       let angle = Math.atan2(tangent.x, tangent.z);
       if (!isUphill) angle += Math.PI;
       chair.rotation.y = angle;
@@ -336,10 +343,6 @@ export function updateLifts(lifts, deltaTime) {
   }
 }
 
-/**
- * Find the nearest lift bottom station to a position.
- * Returns { lift, distance } or null if none within range.
- */
 export function findNearestLiftBottom(lifts, position, maxDistance = 150) {
   let nearest = null;
   let nearestDist = maxDistance;

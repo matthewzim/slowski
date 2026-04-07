@@ -198,15 +198,16 @@ export class Player {
   }
 
   spawn() {
-    // Start at top of a run (Crystal Ridge area)
-    const startX = -250;
-    const startZ = -2500;
+    // Start at top of Lift 1 (mid-mountain, Main Street run start)
+    // Normalized (0.46, 0.35) -> world coords
+    const startX = (0.46 - 0.5) * TERRAIN_CONFIG.worldWidth;
+    const startZ = (0.35 - 0.5) * TERRAIN_CONFIG.worldDepth;
     const startY = getHeightAt(startX, startZ, this.heightmap, this.resolution);
 
     this.position.set(startX, startY, startZ);
     this.velocity.set(0, 0, 0);
     this.speed = 0;
-    this.heading = Math.PI * 0.7; // Pointing roughly downhill
+    this.heading = Math.PI; // Pointing downhill (toward base village)
     this.onLift = false;
     this.currentLift = null;
     this.mesh.position.copy(this.position);
