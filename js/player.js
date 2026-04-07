@@ -198,10 +198,10 @@ export class Player {
   }
 
   spawn() {
-    // Start at top of Lift 1 (mid-mountain, Main Street run start)
-    // Normalized (0.46, 0.35) -> world coords
-    const startX = (0.46 - 0.5) * TERRAIN_CONFIG.worldWidth;
-    const startZ = (0.35 - 0.5) * TERRAIN_CONFIG.worldDepth;
+    // Start at top of Excalibur Gondola (lower mid-mountain)
+    // Normalized (0.19, 0.22) -> world coords
+    const startX = (0.19 - 0.5) * TERRAIN_CONFIG.worldWidth;
+    const startZ = (0.22 - 0.5) * TERRAIN_CONFIG.worldDepth;
     const startY = getHeightAt(startX, startZ, this.heightmap, this.resolution);
 
     this.position.set(startX, startY, startZ);
