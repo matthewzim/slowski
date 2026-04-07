@@ -5,8 +5,7 @@
 
 import * as THREE from 'three';
 import {
-  generateProceduralHeightmap,
-  createTerrainMesh,
+  loadTerrainFromGLB,
   getHeightAt,
   getElevationAt,
   TERRAIN_CONFIG,
@@ -26,6 +25,7 @@ let heightmap, resolution;
 let player, followCam;
 let lifts = [];
 let snowParticles, sprayParticles;
+let snowMat;
 let clock;
 let gameTime = 0;
 
@@ -521,49 +521,45 @@ async function init() {
   setLoadProgress(5, 'Initializing renderer...');
   initScene();
 
-  setLoadProgress(15, 'Generating terrain heightmap...');
-  resolution = TERRAIN_CONFIG.resolution;
-  heightmap = generateProceduralHeightmap(resolution);
+  setLoadProgress(10, 'Loading terrain model...');
+  snowMat = createSnowMaterial();
+  const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress);
+  heightmap = terrainResult.heightmap;
+  resolution = terrainResult.resolution;
+  scene.add(terrainResult.mesh);
 
-  setLoadProgress(35, 'Creating terrain mesh...');
-  await nextFrame();
-
-  const snowMat = createSnowMaterial();
-  const terrainMesh = createTerrainMesh(heightmap, resolution, snowMat);
-  scene.add(terrainMesh);
-
-  setLoadProgress(42, 'Placing ski runs...');
+  setLoadProgress(82, 'Placing ski runs...');
   await nextFrame();
 
   const runVisuals = createRunVisuals(heightmap, resolution);
   scene.add(runVisuals);
 
-  setLoadProgress(50, 'Building chairlifts...');
+  setLoadProgress(84, 'Building chairlifts...');
   await nextFrame();
 
   const liftSystem = generateLiftSystem(heightmap, resolution);
   scene.add(liftSystem.group);
   lifts = liftSystem.lifts;
 
-  setLoadProgress(60, 'Growing trees...');
+  setLoadProgress(86, 'Growing trees...');
   await nextFrame();
 
   const trees = generateTrees(heightmap, resolution);
   scene.add(trees);
 
-  setLoadProgress(72, 'Building base village...');
+  setLoadProgress(88, 'Building base village...');
   await nextFrame();
 
   const village = createBaseVillage(heightmap, resolution);
   scene.add(village);
 
-  setLoadProgress(78, 'Adding cliff features...');
+  setLoadProgress(90, 'Adding cliff features...');
   await nextFrame();
 
   const cliffs = createCliffFeatures(heightmap, resolution);
   scene.add(cliffs);
 
-  setLoadProgress(85, 'Setting up player...');
+  setLoadProgress(92, 'Setting up player...');
   await nextFrame();
 
   player = new Player(heightmap, resolution);
@@ -748,9 +744,9 @@ function animate() {
     );
   }
 
-  const terrainMesh = scene.children.find(c => c instanceof THREE.Mesh && c.material.uniforms);
-  if (terrainMesh && terrainMesh.material.uniforms.uTime) {
-    terrainMesh.material.uniforms.uTime.value = gameTime;
+  // Update snow material time uniform on all terrain meshes
+  if (snowMat && snowMat.uniforms && snowMat.uniforms.uTime) {
+    snowMat.uniforms.uTime.value = gameTime;
   }
 
   updateHUD(stats);
