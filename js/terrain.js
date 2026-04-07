@@ -144,66 +144,79 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
 }
 
 /**
- * Raycast downward on a grid to build a heightmap from the loaded mesh.
+ * Build a heightmap by reading vertex positions directly from the mesh
+ * geometry. This is O(vertices) instead of O(resolution² × triangles).
  */
 async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
-  const { worldWidth, worldDepth } = TERRAIN_CONFIG;
+  const { worldWidth, worldDepth, baseElevation, minElevation } = TERRAIN_CONFIG;
   const heightmap = new Float32Array(resolution * resolution);
+  const filled = new Uint8Array(resolution * resolution);
+  heightmap.fill(minElevation);
 
-  // Create a raycaster pointing straight down
-  const raycaster = new THREE.Raycaster();
-  const rayOrigin = new THREE.Vector3();
-  const rayDir = new THREE.Vector3(0, -1, 0);
+  terrainGroup.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
 
-  // Collect all meshes for raycasting
-  const meshes = [];
+  // Scatter vertex heights onto the grid
   terrainGroup.traverse((child) => {
-    if (child.isMesh) {
-      meshes.push(child);
-    }
-  });
+    if (!child.isMesh) return;
+    const pos = child.geometry.attributes.position;
+    const mat = child.matrixWorld;
 
-  // Cast rays in batches to avoid blocking the main thread
-  const batchSize = 64; // rows per batch
-  for (let iy = 0; iy < resolution; iy += batchSize) {
-    const endY = Math.min(iy + batchSize, resolution);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      v.applyMatrix4(mat);
 
-    for (let y = iy; y < endY; y++) {
-      for (let ix = 0; ix < resolution; ix++) {
-        const wx = (ix / (resolution - 1) - 0.5) * worldWidth;
-        const wz = (y / (resolution - 1) - 0.5) * worldDepth;
+      const gx = ((v.x / worldWidth) + 0.5) * (resolution - 1);
+      const gz = ((v.z / worldDepth) + 0.5) * (resolution - 1);
+      const x0 = Math.floor(gx), z0 = Math.floor(gz);
+      const elevation = v.y + baseElevation;
 
-        rayOrigin.set(wx, 10000, wz);
-        raycaster.set(rayOrigin, rayDir);
-
-        let closestDist = Infinity;
-        for (const mesh of meshes) {
-          const intersections = raycaster.intersectObject(mesh, false);
-          if (intersections.length > 0 && intersections[0].distance < closestDist) {
-            closestDist = intersections[0].distance;
+      // Write to nearest grid cells
+      for (let dz = 0; dz <= 1; dz++) {
+        for (let dx = 0; dx <= 1; dx++) {
+          const cx = x0 + dx, cz = z0 + dz;
+          if (cx < 0 || cx >= resolution || cz < 0 || cz >= resolution) continue;
+          const idx = cz * resolution + cx;
+          if (!filled[idx] || elevation > heightmap[idx]) {
+            heightmap[idx] = elevation;
+            filled[idx] = 1;
           }
-        }
-
-        if (closestDist < Infinity) {
-          // The hit point Y = 10000 - closestDist
-          const hitY = 10000 - closestDist;
-          // Store as elevation: hitY maps to (elevation - baseElevation)
-          heightmap[y * resolution + ix] = hitY + TERRAIN_CONFIG.baseElevation;
-        } else {
-          // No hit — use minimum elevation
-          heightmap[y * resolution + ix] = TERRAIN_CONFIG.minElevation;
         }
       }
     }
+  });
 
-    if (onProgress) {
-      const pct = 40 + Math.round((endY / resolution) * 40);
-      onProgress(pct, 'Building heightmap from terrain...');
+  if (onProgress) onProgress(60, 'Interpolating heightmap...');
+
+  // Fill empty cells by iterative neighbor averaging
+  let emptyCount;
+  do {
+    emptyCount = 0;
+    for (let z = 0; z < resolution; z++) {
+      for (let x = 0; x < resolution; x++) {
+        const idx = z * resolution + x;
+        if (filled[idx]) continue;
+        let sum = 0, count = 0;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dz === 0) continue;
+            const nx = x + dx, nz = z + dz;
+            if (nx >= 0 && nx < resolution && nz >= 0 && nz < resolution) {
+              const nIdx = nz * resolution + nx;
+              if (filled[nIdx]) { sum += heightmap[nIdx]; count++; }
+            }
+          }
+        }
+        if (count > 0) {
+          heightmap[idx] = sum / count;
+          filled[idx] = 1;
+        } else {
+          emptyCount++;
+        }
+      }
     }
-
-    // Yield to the main thread occasionally
     await new Promise((r) => setTimeout(r, 0));
-  }
+  } while (emptyCount > 0);
 
   return heightmap;
 }
