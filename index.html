@@ -90,12 +90,44 @@
     }
     #loading .bar { width: 300px; height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px; }
     #loading .bar-fill { height: 100%; background: #fff; border-radius: 3px; width: 0%; transition: width 0.3s; }
+    /* .dat upload UI */
+    #dat-upload-ui {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      margin-top: 8px;
+    }
+    #dat-drop-zone {
+      width: 300px; padding: 20px;
+      border: 2px dashed rgba(255,255,255,0.3); border-radius: 10px;
+      text-align: center; cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    #dat-drop-zone:hover { border-color: rgba(255,255,255,0.7); }
+    #dat-upload-btn {
+      background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.4);
+      padding: 8px 24px; border-radius: 6px; font-size: 14px; cursor: pointer;
+      transition: background 0.2s;
+    }
+    #dat-upload-btn:hover { background: rgba(255,255,255,0.3); }
+    #dat-skip-btn {
+      background: none; color: rgba(255,255,255,0.6); border: none;
+      font-size: 12px; cursor: pointer; text-decoration: underline;
+    }
+    #dat-skip-btn:hover { color: #fff; }
   </style>
 </head>
 <body>
   <div id="loading">
     <div>Jamboree Snow Resort</div>
-    <div style="font-size:14px; opacity:0.7;" id="load-status">Generating terrain...</div>
+    <div id="dat-upload-ui">
+      <div style="font-size:13px; opacity:0.7;">Load terrain from a Wii game file, or use the default mountain</div>
+      <div id="dat-drop-zone">
+        <div style="font-size:14px; margin-bottom:6px;">Drag &amp; drop a .dat file here</div>
+        <button id="dat-upload-btn">Choose .dat file</button>
+        <input type="file" id="dat-file-input" accept=".dat,.bin,.arc,.szs,.brres" style="display:none;">
+      </div>
+      <button id="dat-skip-btn">Skip - use default Whistler Blackcomb terrain</button>
+    </div>
+    <div style="font-size:14px; opacity:0.7;" id="load-status"></div>
     <div class="bar"><div class="bar-fill" id="load-bar"></div></div>
   </div>
   <div id="hud">
