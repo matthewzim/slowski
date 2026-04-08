@@ -1,0 +1,11 @@
+{
+  "name": "slowski-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "node tools/extract-dat.mjs"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  }
+}

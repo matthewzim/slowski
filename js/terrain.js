@@ -40,14 +40,14 @@ export function worldToNormalized(x, z) {
  *
  * Returns { mesh, heightmap, resolution }.
  */
-export async function loadTerrainFromGLB(snowMaterial, onProgress) {
+export async function loadTerrainFromGLB(snowMaterial, onProgress, glbFile = 'whistlerblackcomb3.glb') {
   const loader = new GLTFLoader();
 
-  if (onProgress) onProgress(10, 'Loading terrain model...');
+  if (onProgress) onProgress(10, `Loading ${glbFile}...`);
 
   const gltf = await new Promise((resolve, reject) => {
     loader.load(
-      'whistlerblackcomb3.glb',
+      glbFile,
       resolve,
       (xhr) => {
         if (onProgress && xhr.total > 0) {

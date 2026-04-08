@@ -19,8 +19,9 @@ import { generateTrees } from './trees.js';
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
 import { FollowCamera } from './camera.js';
-import { loadFromDat } from './dat/loader.js';
-import { scaleToWorld } from './dat/converter.js';
+// Dynamic imports — only loaded if a raw .dat file is provided (dev/debug mode)
+// import { loadFromDat } from './dat/loader.js';
+// import { scaleToWorld } from './dat/converter.js';
 
 // -- Globals --
 let scene, camera, renderer;
@@ -553,16 +554,18 @@ async function init() {
   setLoadProgress(10, 'Loading terrain model...');
   snowMat = createSnowMaterial();
 
+  // Load terrain: try ski-terrain.glb (extracted from Wii .dat) first,
+  // fall back to the default whistlerblackcomb3.glb
+  const terrainFile = pendingDatFile ? null : await pickTerrainFile();
   let terrainMesh;
+
   if (pendingDatFile) {
-    // Load terrain from uploaded .dat file
+    // Runtime .dat parsing path (dev/debug only)
+    const { loadFromDat } = await import('./dat/loader.js');
+    const { scaleToWorld } = await import('./dat/converter.js');
     const datResult = await loadFromDat(pendingDatFile, setLoadProgress, snowMat);
     const terrainGroup = datResult.terrainGroup;
-
-    // Scale to world dimensions
     scaleToWorld(terrainGroup, TERRAIN_CONFIG);
-
-    // Apply snow material to all meshes
     terrainGroup.traverse((child) => {
       if (child.isMesh) {
         child.material = snowMat;
@@ -570,15 +573,14 @@ async function init() {
         child.castShadow = true;
       }
     });
-
     setLoadProgress(78, 'Building heightmap from extracted terrain...');
     heightmap = await buildHeightmapFromGroup(terrainGroup, TERRAIN_CONFIG.resolution, setLoadProgress);
     resolution = TERRAIN_CONFIG.resolution;
     terrainMesh = terrainGroup;
-    pendingDatFile = null; // free memory
+    pendingDatFile = null;
   } else {
-    // Default: load Whistler Blackcomb GLB
-    const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress);
+    // Load pre-extracted GLB (ski-terrain.glb or default whistlerblackcomb3.glb)
+    const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress, terrainFile);
     heightmap = terrainResult.heightmap;
     resolution = terrainResult.resolution;
     terrainMesh = terrainResult.mesh;
@@ -838,29 +840,19 @@ function exposeGameAPI() {
   };
 }
 
-// -- .dat file auto-loading --
-// Attempts to fetch ski.dat from the repo directory. If found, loads terrain
-// from the extracted Wii game data. If not found (404), falls back to the
-// default Whistler Blackcomb GLB terrain.
-async function tryLoadDatFile() {
-  setLoadProgress(2, 'Checking for ski.dat...');
+// -- Terrain file selection --
+// Checks if ski-terrain.glb exists (pre-extracted from Wii .dat).
+// If found, uses it. Otherwise falls back to default whistlerblackcomb3.glb.
+async function pickTerrainFile() {
   try {
-    const response = await fetch('ski.dat');
-    if (!response.ok) {
-      // No ski.dat found — use default terrain
-      console.log('No ski.dat found, using default Whistler Blackcomb terrain.');
-      init().catch(handleInitError);
-      return;
+    const resp = await fetch('ski-terrain.glb', { method: 'HEAD' });
+    if (resp.ok) {
+      console.log('Found ski-terrain.glb — loading Wii game terrain.');
+      return 'ski-terrain.glb';
     }
-    setLoadProgress(3, 'Reading ski.dat...');
-    pendingDatFile = await response.arrayBuffer();
-    console.log(`Loaded ski.dat (${(pendingDatFile.byteLength / 1024 / 1024).toFixed(1)} MB)`);
-    init().catch(handleInitError);
-  } catch (e) {
-    // Network error or CORS issue — fall back to default
-    console.log('Could not fetch ski.dat, using default terrain:', e.message);
-    init().catch(handleInitError);
-  }
+  } catch {}
+  console.log('No ski-terrain.glb found, using default Whistler Blackcomb terrain.');
+  return 'whistlerblackcomb3.glb';
 }
 
 function handleInitError(err) {
@@ -869,4 +861,4 @@ function handleInitError(err) {
 }
 
 // Start
-tryLoadDatFile();
+init().catch(handleInitError);
