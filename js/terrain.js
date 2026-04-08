@@ -364,3 +364,16 @@ export function getSlopeAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resoluti
 export function getElevationAt(x, z, heightmap, resolution = TERRAIN_CONFIG.resolution) {
   return getHeightAt(x, z, heightmap, resolution) + TERRAIN_CONFIG.baseElevation;
 }
+
+/**
+ * Build a heightmap from any Three.js Group (used by the .dat loader).
+ * Reuses the same triangle rasterization as GLB terrain loading.
+ * @param {THREE.Group} group - already scaled and positioned terrain group
+ * @param {number} [res] - heightmap resolution
+ * @param {Function} [onProgress] - progress callback
+ * @returns {Promise<Float32Array>}
+ */
+export async function buildHeightmapFromGroup(group, res, onProgress) {
+  const resolution = res || TERRAIN_CONFIG.resolution;
+  return buildHeightmapFromMesh(group, resolution, onProgress);
+}

@@ -11,6 +11,7 @@ import {
   TERRAIN_CONFIG,
   normalizedToWorld,
   worldToNormalized,
+  buildHeightmapFromGroup,
 } from './terrain.js';
 import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSprayParticles, updateSprayParticles } from './snow.js';
 import { generateLiftSystem, updateLifts, findNearestLiftBottom, LIFT_DEFS } from './lifts.js';
@@ -18,6 +19,8 @@ import { generateTrees } from './trees.js';
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
 import { FollowCamera } from './camera.js';
+import { loadFromDat } from './dat/loader.js';
+import { scaleToWorld } from './dat/converter.js';
 
 // -- Globals --
 let scene, camera, renderer;
@@ -28,6 +31,7 @@ let snowParticles, sprayParticles;
 let snowMat;
 let clock;
 let gameTime = 0;
+let pendingDatFile = null; // ArrayBuffer from user upload
 
 const input = { left: false, right: false, brake: false, skate: false };
 let nearbyLift = null;
@@ -548,10 +552,38 @@ async function init() {
 
   setLoadProgress(10, 'Loading terrain model...');
   snowMat = createSnowMaterial();
-  const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress);
-  heightmap = terrainResult.heightmap;
-  resolution = terrainResult.resolution;
-  scene.add(terrainResult.mesh);
+
+  let terrainMesh;
+  if (pendingDatFile) {
+    // Load terrain from uploaded .dat file
+    const datResult = await loadFromDat(pendingDatFile, setLoadProgress, snowMat);
+    const terrainGroup = datResult.terrainGroup;
+
+    // Scale to world dimensions
+    scaleToWorld(terrainGroup, TERRAIN_CONFIG);
+
+    // Apply snow material to all meshes
+    terrainGroup.traverse((child) => {
+      if (child.isMesh) {
+        child.material = snowMat;
+        child.receiveShadow = true;
+        child.castShadow = true;
+      }
+    });
+
+    setLoadProgress(78, 'Building heightmap from extracted terrain...');
+    heightmap = await buildHeightmapFromGroup(terrainGroup, TERRAIN_CONFIG.resolution, setLoadProgress);
+    resolution = TERRAIN_CONFIG.resolution;
+    terrainMesh = terrainGroup;
+    pendingDatFile = null; // free memory
+  } else {
+    // Default: load Whistler Blackcomb GLB
+    const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress);
+    heightmap = terrainResult.heightmap;
+    resolution = terrainResult.resolution;
+    terrainMesh = terrainResult.mesh;
+  }
+  scene.add(terrainMesh);
 
   setLoadProgress(82, 'Placing ski runs...');
   await nextFrame();
@@ -806,8 +838,70 @@ function exposeGameAPI() {
   };
 }
 
-// Start
-init().catch(err => {
+// -- .dat file upload handling --
+function setupDatUpload() {
+  const uploadBtn = document.getElementById('dat-upload-btn');
+  const fileInput = document.getElementById('dat-file-input');
+  const skipBtn = document.getElementById('dat-skip-btn');
+  const uploadUI = document.getElementById('dat-upload-ui');
+  const dropZone = document.getElementById('dat-drop-zone');
+
+  if (!uploadBtn) {
+    // No upload UI, start directly
+    init().catch(handleInitError);
+    return;
+  }
+
+  uploadBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) loadDatFile(file);
+  });
+
+  skipBtn.addEventListener('click', () => {
+    if (uploadUI) uploadUI.style.display = 'none';
+    init().catch(handleInitError);
+  });
+
+  // Drag and drop
+  if (dropZone) {
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#fff';
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
+      const file = e.dataTransfer.files[0];
+      if (file) loadDatFile(file);
+    });
+  }
+}
+
+function loadDatFile(file) {
+  const uploadUI = document.getElementById('dat-upload-ui');
+  if (uploadUI) uploadUI.style.display = 'none';
+
+  setLoadProgress(2, `Reading ${file.name}...`);
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    pendingDatFile = e.target.result;
+    init().catch(handleInitError);
+  };
+  reader.onerror = () => {
+    setLoadProgress(0, 'Error reading file');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function handleInitError(err) {
   console.error('Failed to initialize:', err);
   setLoadProgress(0, 'Error: ' + err.message);
-});
+}
+
+// Start
+setupDatUpload();
