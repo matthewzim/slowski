@@ -838,64 +838,29 @@ function exposeGameAPI() {
   };
 }
 
-// -- .dat file upload handling --
-function setupDatUpload() {
-  const uploadBtn = document.getElementById('dat-upload-btn');
-  const fileInput = document.getElementById('dat-file-input');
-  const skipBtn = document.getElementById('dat-skip-btn');
-  const uploadUI = document.getElementById('dat-upload-ui');
-  const dropZone = document.getElementById('dat-drop-zone');
-
-  if (!uploadBtn) {
-    // No upload UI, start directly
+// -- .dat file auto-loading --
+// Attempts to fetch ski.dat from the repo directory. If found, loads terrain
+// from the extracted Wii game data. If not found (404), falls back to the
+// default Whistler Blackcomb GLB terrain.
+async function tryLoadDatFile() {
+  setLoadProgress(2, 'Checking for ski.dat...');
+  try {
+    const response = await fetch('ski.dat');
+    if (!response.ok) {
+      // No ski.dat found — use default terrain
+      console.log('No ski.dat found, using default Whistler Blackcomb terrain.');
+      init().catch(handleInitError);
+      return;
+    }
+    setLoadProgress(3, 'Reading ski.dat...');
+    pendingDatFile = await response.arrayBuffer();
+    console.log(`Loaded ski.dat (${(pendingDatFile.byteLength / 1024 / 1024).toFixed(1)} MB)`);
     init().catch(handleInitError);
-    return;
+  } catch (e) {
+    // Network error or CORS issue — fall back to default
+    console.log('Could not fetch ski.dat, using default terrain:', e.message);
+    init().catch(handleInitError);
   }
-
-  uploadBtn.addEventListener('click', () => fileInput.click());
-
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) loadDatFile(file);
-  });
-
-  skipBtn.addEventListener('click', () => {
-    if (uploadUI) uploadUI.style.display = 'none';
-    init().catch(handleInitError);
-  });
-
-  // Drag and drop
-  if (dropZone) {
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '#fff';
-    });
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
-    });
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = 'rgba(255,255,255,0.3)';
-      const file = e.dataTransfer.files[0];
-      if (file) loadDatFile(file);
-    });
-  }
-}
-
-function loadDatFile(file) {
-  const uploadUI = document.getElementById('dat-upload-ui');
-  if (uploadUI) uploadUI.style.display = 'none';
-
-  setLoadProgress(2, `Reading ${file.name}...`);
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    pendingDatFile = e.target.result;
-    init().catch(handleInitError);
-  };
-  reader.onerror = () => {
-    setLoadProgress(0, 'Error reading file');
-  };
-  reader.readAsArrayBuffer(file);
 }
 
 function handleInitError(err) {
@@ -904,4 +869,4 @@ function handleInitError(err) {
 }
 
 // Start
-setupDatUpload();
+tryLoadDatFile();
