@@ -14,8 +14,6 @@ import {
   buildHeightmapFromGroup,
 } from './terrain.js';
 import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSprayParticles, updateSprayParticles } from './snow.js';
-import { generateLiftSystem, updateLifts, findNearestLiftBottom, LIFT_DEFS } from './lifts.js';
-import { generateTrees } from './trees.js';
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
 import { FollowCamera } from './camera.js';
@@ -26,7 +24,6 @@ import { scaleToWorld } from './dat/converter.js';
 let scene, camera, renderer;
 let heightmap, resolution;
 let player, followCam;
-let lifts = [];
 let snowParticles, sprayParticles;
 let snowMat;
 let clock;
@@ -34,7 +31,6 @@ let gameTime = 0;
 let pendingDatFile = null; // ArrayBuffer from user upload
 
 const input = { left: false, right: false, brake: false, skate: false };
-let nearbyLift = null;
 
 // -- Loading progress --
 function setLoadProgress(percent, message) {
@@ -84,20 +80,6 @@ function drawMinimapSilhouette(playerX, playerZ) {
   } else {
     // Fallback: draw terrain-based minimap
     drawMinimapTerrain(ctx, w, h);
-  }
-
-  // Draw lift lines on the minimap
-  for (const def of LIFT_DEFS) {
-    ctx.strokeStyle = 'rgba(220, 40, 40, 0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let i = 0; i < def.points.length; i++) {
-      const px = def.points[i][0] * w;
-      const py = def.points[i][1] * h;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.stroke();
   }
 
   // Draw player position
@@ -172,7 +154,6 @@ function drawMinimapTerrain(ctx, w, h) {
 }
 
 // -- Expanded Trail Map --
-let liftTopPositions = [];
 
 function drawTerrainMap() {
   const canvas = document.getElementById('terrain-map-canvas');
@@ -203,64 +184,6 @@ function drawTerrainMap() {
     }
   }
 
-  // Draw lift lines and stations
-  liftTopPositions = [];
-  for (const def of LIFT_DEFS) {
-    // Lift line color based on lift color
-    const liftColor = def.color || 0xff8800;
-    const r = (liftColor >> 16) & 0xff;
-    const g = (liftColor >> 8) & 0xff;
-    const b = liftColor & 0xff;
-
-    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    for (let i = 0; i < def.points.length; i++) {
-      const cx = def.points[i][0] * w;
-      const cy = def.points[i][1] * h;
-      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
-    }
-    ctx.stroke();
-
-    // Top station marker (clickable)
-    const topPt = def.points[def.points.length - 1];
-    const topCx = topPt[0] * w;
-    const topCy = topPt[1] * h;
-    const { x: topWorldX, z: topWorldZ } = normalizedToWorld(topPt[0], topPt[1]);
-
-    liftTopPositions.push({
-      name: def.name,
-      number: def.number,
-      worldX: topWorldX,
-      worldZ: topWorldZ,
-      canvasX: topCx,
-      canvasY: topCy,
-    });
-
-    // Draw top station circle
-    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
-    ctx.beginPath();
-    ctx.arc(topCx, topCy, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Lift number label
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(def.number), topCx, topCy);
-
-    // Bottom station marker
-    const botPt = def.points[0];
-    ctx.fillStyle = 'rgba(200, 200, 200, 0.6)';
-    ctx.beginPath();
-    ctx.arc(botPt[0] * w, botPt[1] * h, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
   // Draw player position
   if (player) {
     const px = (player.position.x / TERRAIN_CONFIG.worldWidth + 0.5) * w;
@@ -273,6 +196,13 @@ function drawTerrainMap() {
     ctx.fill();
     ctx.stroke();
   }
+
+  // Instruction text
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('Click anywhere to travel', w / 2, h - 8);
 }
 
 function setupTerrainMap() {
@@ -297,52 +227,45 @@ function setupTerrainMap() {
     if (e.target === overlay) overlay.classList.remove('open');
   });
 
-  // Hover tooltip for lift stations
+  // Show elevation tooltip on hover
   mapCanvas.addEventListener('mousemove', (e) => {
     const rect = mapCanvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (mapCanvas.width / rect.width);
     const my = (e.clientY - rect.top) * (mapCanvas.height / rect.height);
 
-    let hoveredLift = null;
-    for (const ltp of liftTopPositions) {
-      const dx = mx - ltp.canvasX;
-      const dy = my - ltp.canvasY;
-      if (dx * dx + dy * dy < 14 * 14) {
-        hoveredLift = ltp;
-        break;
-      }
-    }
+    const worldX = (mx / mapCanvas.width - 0.5) * TERRAIN_CONFIG.worldWidth;
+    const worldZ = (my / mapCanvas.height - 0.5) * TERRAIN_CONFIG.worldDepth;
+    const elev = getHeightAt(worldX, worldZ, heightmap, resolution) + TERRAIN_CONFIG.baseElevation;
 
-    if (hoveredLift) {
+    if (elev > TERRAIN_CONFIG.baseElevation + 5) {
       tooltip.style.display = 'block';
-      tooltip.textContent = `${hoveredLift.name} (click to travel)`;
+      tooltip.textContent = `Elev: ${Math.round(elev)}m (click to travel)`;
       tooltip.style.left = (e.clientX - overlay.getBoundingClientRect().left + 12) + 'px';
       tooltip.style.top = (e.clientY - overlay.getBoundingClientRect().top - 30) + 'px';
       mapCanvas.style.cursor = 'pointer';
     } else {
       tooltip.style.display = 'none';
-      mapCanvas.style.cursor = 'crosshair';
+      mapCanvas.style.cursor = 'default';
     }
   });
 
-  // Click to fast travel to lift top
+  // Click anywhere on the map to fast travel
   mapCanvas.addEventListener('click', (e) => {
     const rect = mapCanvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (mapCanvas.width / rect.width);
     const my = (e.clientY - rect.top) * (mapCanvas.height / rect.height);
 
-    for (const ltp of liftTopPositions) {
-      const dx = mx - ltp.canvasX;
-      const dy = my - ltp.canvasY;
-      if (dx * dx + dy * dy < 14 * 14) {
-        const y = getHeightAt(ltp.worldX, ltp.worldZ, heightmap, resolution);
-        player.position.set(ltp.worldX, y, ltp.worldZ);
-        player.velocity.set(0, 0, 0);
-        player.speed = 0;
-        followCam.reset(player.position, player.heading);
-        overlay.classList.remove('open');
-        break;
-      }
+    const worldX = (mx / mapCanvas.width - 0.5) * TERRAIN_CONFIG.worldWidth;
+    const worldZ = (my / mapCanvas.height - 0.5) * TERRAIN_CONFIG.worldDepth;
+    const y = getHeightAt(worldX, worldZ, heightmap, resolution);
+
+    // Only teleport if there's actual terrain at this position
+    if (y > 1) {
+      player.position.set(worldX, y, worldZ);
+      player.velocity.set(0, 0, 0);
+      player.speed = 0;
+      followCam.reset(player.position, player.heading);
+      overlay.classList.remove('open');
     }
   });
 }
@@ -577,7 +500,7 @@ async function init() {
     terrainMesh = terrainGroup;
     pendingDatFile = null; // free memory
   } else {
-    // Default: load Whistler Blackcomb GLB
+    // Default: load WeTest.glb terrain
     const terrainResult = await loadTerrainFromGLB(snowMat, setLoadProgress);
     heightmap = terrainResult.heightmap;
     resolution = terrainResult.resolution;
@@ -590,19 +513,6 @@ async function init() {
 
   const runVisuals = createRunVisuals(heightmap, resolution);
   scene.add(runVisuals);
-
-  setLoadProgress(84, 'Building chairlifts...');
-  await nextFrame();
-
-  const liftSystem = await generateLiftSystem(heightmap, resolution);
-  scene.add(liftSystem.group);
-  lifts = liftSystem.lifts;
-
-  setLoadProgress(86, 'Growing trees...');
-  await nextFrame();
-
-  const trees = generateTrees(heightmap, resolution);
-  scene.add(trees);
 
   setLoadProgress(88, 'Building base village...');
   await nextFrame();
@@ -674,12 +584,7 @@ function setupInput() {
       case 'ArrowDown': case 'KeyS': input.brake = true; break;
       case 'KeyR': player.spawn(); followCam.reset(player.position, player.heading); break;
       case 'KeyE': {
-        if (player.onLift) {
-          player.skipToLiftTop();
-          followCam.reset(player.position, player.heading);
-        } else if (nearbyLift) {
-          player.boardLift(nearbyLift.lift);
-        }
+        // No chairlifts - use the map (M) to travel around the mountain
         break;
       }
       case 'KeyM': {
@@ -756,15 +661,7 @@ function updateHUD(stats) {
 
   const liftPrompt = document.getElementById('lift-prompt');
   if (liftPrompt) {
-    if (stats.onLift) {
-      liftPrompt.textContent = `Riding ${stats.liftName} - Press E to skip to top`;
-      liftPrompt.style.display = 'block';
-    } else if (nearbyLift) {
-      liftPrompt.textContent = `Press E to board ${nearbyLift.lift.name}`;
-      liftPrompt.style.display = 'block';
-    } else {
-      liftPrompt.style.display = 'none';
-    }
+    liftPrompt.style.display = 'none';
   }
 }
 
@@ -777,17 +674,9 @@ function animate() {
   const deltaTime = clock.getDelta();
   gameTime += deltaTime;
 
-  if (!player.onLift) {
-    nearbyLift = findNearestLiftBottom(lifts, player.position, 30);
-  } else {
-    nearbyLift = null;
-  }
-
   const stats = player.update(deltaTime, input, gameTime);
 
   followCam.update(player.position, player.heading, player.speed, deltaTime);
-
-  updateLifts(lifts, deltaTime);
 
   updateSnowParticles(snowParticles, player.position, deltaTime);
   updateSprayParticles(sprayParticles, player.position, player.heading, player.speed, deltaTime);
@@ -848,7 +737,7 @@ async function tryLoadDatFile() {
     const response = await fetch('ski.dat');
     if (!response.ok) {
       // No ski.dat found — use default terrain
-      console.log('No ski.dat found, using default Whistler Blackcomb terrain.');
+      console.log('No ski.dat found, using default terrain.');
       init().catch(handleInitError);
       return;
     }

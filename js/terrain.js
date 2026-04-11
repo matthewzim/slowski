@@ -1,6 +1,6 @@
 /**
  * Terrain system for Jamboree Snow Resort
- * Loads whistlerblackcomb3.glb as the terrain mesh and extracts a heightmap
+ * Loads WeTest.glb as the terrain mesh and extracts a heightmap
  * from it via raycasting so that physics queries (getHeightAt, etc.) still work.
  */
 
@@ -47,7 +47,7 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
 
   const gltf = await new Promise((resolve, reject) => {
     loader.load(
-      'whistlerblackcomb3.glb',
+      'WeTest.glb',
       resolve,
       (xhr) => {
         if (onProgress && xhr.total > 0) {
