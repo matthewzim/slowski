@@ -242,8 +242,11 @@ async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
 
   if (onProgress) onProgress(60, 'Interpolating heightmap...');
 
-  // Fill empty cells by iterative neighbor averaging
+  // Fill empty cells by iterative neighbor averaging.
+  // Cap iterations to avoid hanging when the model doesn't cover the full grid.
+  const maxFillPasses = 50;
   let emptyCount;
+  let pass = 0;
   do {
     emptyCount = 0;
     for (let z = 0; z < resolution; z++) {
@@ -269,8 +272,11 @@ async function buildHeightmapFromMesh(terrainGroup, resolution, onProgress) {
         }
       }
     }
+    pass++;
     await new Promise((r) => setTimeout(r, 0));
-  } while (emptyCount > 0);
+  } while (emptyCount > 0 && pass < maxFillPasses);
+
+  // Any remaining unfilled cells stay at minElevation (set at the start)
 
   return heightmap;
 }
