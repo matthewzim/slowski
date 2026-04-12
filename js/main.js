@@ -485,10 +485,9 @@ async function init() {
     // Scale to world dimensions
     scaleToWorld(terrainGroup, TERRAIN_CONFIG);
 
-    // Apply snow material to all meshes
+    // Keep original materials; just enable shadows
     terrainGroup.traverse((child) => {
       if (child.isMesh) {
-        child.material = snowMat;
         child.receiveShadow = true;
         child.castShadow = true;
       }
