@@ -65,7 +65,12 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
   // cubes with huge translations) that would blow up the bounding box.
   const meshes = [];
   const toRemove = [];
-  gltf.scene.traverse((child) => {
+  const terrainGroup = gltf.scene;
+
+  // Ensure world matrices are computed so we can check world-space bounds
+  terrainGroup.updateMatrixWorld(true);
+
+  terrainGroup.traverse((child) => {
     if (child.isMesh) {
       meshes.push(child);
     }
@@ -75,13 +80,14 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
     throw new Error('No meshes found in GLB file');
   }
 
-  // Identify meshes that are stray artifacts (tiny geometry far from origin)
+  // Identify meshes that are stray artifacts (tiny in world space)
+  // Use world-space bounds so that models with node transforms aren't
+  // incorrectly filtered out.
   for (const m of meshes) {
-    const geoBbox = m.geometry.boundingBox || (() => { m.geometry.computeBoundingBox(); return m.geometry.boundingBox; })();
-    const geoSize = new THREE.Vector3();
-    geoBbox.getSize(geoSize);
-    const maxDim = Math.max(geoSize.x, geoSize.y, geoSize.z);
-    // If the mesh's own geometry is tiny (< 10 units), it's likely an artifact
+    const worldBbox = new THREE.Box3().setFromObject(m);
+    const worldSize = new THREE.Vector3();
+    worldBbox.getSize(worldSize);
+    const maxDim = Math.max(worldSize.x, worldSize.y, worldSize.z);
     if (maxDim < 10) {
       toRemove.push(m);
     }
@@ -91,25 +97,20 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
     m.removeFromParent();
   }
 
-  // Merge everything into a single group and compute its bounding box
-  const terrainGroup = gltf.scene;
+  // Compute bounding box after artifact removal
   const bbox = new THREE.Box3().setFromObject(terrainGroup);
   const modelSize = new THREE.Vector3();
   bbox.getSize(modelSize);
   const modelCenter = new THREE.Vector3();
   bbox.getCenter(modelCenter);
 
-  // Scale the model to fit our world dimensions
+  // Scale the model uniformly to fit our world dimensions,
+  // preserving the mountain's proportions
   const scaleX = TERRAIN_CONFIG.worldWidth / modelSize.x;
   const scaleZ = TERRAIN_CONFIG.worldDepth / modelSize.z;
   const scale = Math.min(scaleX, scaleZ);
 
-  // We want the vertical scale to produce elevations in our expected range
-  const modelHeightRange = modelSize.y;
-  const desiredHeightRange = TERRAIN_CONFIG.maxElevation - TERRAIN_CONFIG.minElevation;
-  const scaleY = desiredHeightRange / modelHeightRange;
-
-  terrainGroup.scale.set(scale, scaleY, scale);
+  terrainGroup.scale.set(scale, scale, scale);
 
   // Re-center: put model center at world origin horizontally,
   // and base at elevation 0 (which maps to baseElevation in world terms)
