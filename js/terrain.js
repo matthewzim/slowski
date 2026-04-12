@@ -126,10 +126,9 @@ export async function loadTerrainFromGLB(snowMaterial, onProgress) {
   );
   terrainGroup.updateMatrixWorld(true);
 
-  // Apply snow material to all meshes
+  // Keep original GLB materials; just enable shadows
   terrainGroup.traverse((child) => {
     if (child.isMesh) {
-      child.material = snowMaterial;
       child.receiveShadow = true;
       child.castShadow = true;
     }

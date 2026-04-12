@@ -27,7 +27,7 @@ const PLAYER_CONFIG = {
   // Player dimensions
   height: 1.6,
   radius: 0.3,
-  groundClearance: 0.5, // Extra offset to prevent clipping through visual terrain
+  groundClearance: 0.1, // Small offset to keep skier just above terrain surface
 };
 
 export class Player {
@@ -380,7 +380,7 @@ export class Player {
       if (this.velocity.y < 0) {
         this.velocity.y = 0;
       }
-    } else if (this.onGround && heightAboveGround < gc + 2.0) {
+    } else if (this.onGround && heightAboveGround < gc + 5.0) {
       // Was on ground and still close - stay grounded (prevents floating on slopes)
       this.position.y = groundY + gc;
       this.onGround = true;
