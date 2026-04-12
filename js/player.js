@@ -10,6 +10,7 @@ import { getHeightAt, getNormalAt, getSlopeAt, TERRAIN_CONFIG } from './terrain.
 const TRAIL_DURATION = 10; // seconds trails last
 const TRAIL_MAX_POINTS = 600;
 const PLAYER_MODEL_PATH = 'cartoon+skier+3d+model (1).glb';
+const PLAYER_MODEL_YAW_OFFSET = -Math.PI / 2; // Rotate imported GLB so skier faces downhill (away from camera).
 
 const PLAYER_CONFIG = {
   // Physics
@@ -142,6 +143,7 @@ export class Player {
     });
 
     const model = gltf.scene;
+    model.rotation.y = PLAYER_MODEL_YAW_OFFSET;
     model.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
@@ -149,7 +151,8 @@ export class Player {
       }
     });
 
-    this._setVisual(model, 1.35);
+    // Slightly larger skier to better occupy the screen.
+    this._setVisual(model, 1.9);
     this._bindModelAnimations(model, gltf.animations || []);
   }
 
