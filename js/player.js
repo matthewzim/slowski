@@ -4,10 +4,12 @@
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getHeightAt, getNormalAt, getSlopeAt, TERRAIN_CONFIG } from './terrain.js';
 
 const TRAIL_DURATION = 10; // seconds trails last
 const TRAIL_MAX_POINTS = 600;
+const PLAYER_MODEL_PATH = 'cartoon+skier+3d+model (1).glb';
 
 const PLAYER_CONFIG = {
   // Physics
@@ -53,6 +55,23 @@ export class Player {
 
     // Create visual mesh
     this.mesh = this._createMesh();
+    this.visualRoot = new THREE.Group();
+    this.mesh.add(this.visualRoot);
+    this.skiTrackHalfWidth = 0.45;
+
+    // Animation/model state
+    this.modelMixer = null;
+    this.modelActions = {};
+    this.modelActionWeights = {};
+    this.modelRig = null;
+    this.modelRigBase = new Map();
+    this.animTime = 0;
+
+    // Create placeholder, then load final skier model
+    this._setVisual(this._createFallbackVisual(), 3.0);
+    this._loadPlayerModel().catch((err) => {
+      console.warn('Could not load skier GLB; using fallback stick figure.', err);
+    });
 
     // Ski trails
     this.trailHistory = []; // { pos: Vector3, time: number }
@@ -66,9 +85,12 @@ export class Player {
   }
 
   _createMesh() {
+    return new THREE.Group();
+  }
+
+  _createFallbackVisual() {
     const group = new THREE.Group();
 
-    // Body
     const bodyGeo = new THREE.CapsuleGeometry(0.2, 0.8, 4, 8);
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5 });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
@@ -76,42 +98,108 @@ export class Player {
     body.castShadow = true;
     group.add(body);
 
-    // Head
     const headGeo = new THREE.SphereGeometry(0.2, 8, 8);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xffdd44 }); // Yellow hair like reference
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffdd44 });
     const head = new THREE.Mesh(headGeo, headMat);
     head.position.y = 1.7;
     head.castShadow = true;
     group.add(head);
 
-    // Skis
     const skiGeo = new THREE.BoxGeometry(0.08, 0.03, 1.6);
     const skiMat = new THREE.MeshStandardMaterial({ color: 0x2255cc, metalness: 0.5 });
     const skiL = new THREE.Mesh(skiGeo, skiMat);
     skiL.position.set(-0.15, 0.02, 0);
     group.add(skiL);
-
     const skiR = new THREE.Mesh(skiGeo, skiMat);
     skiR.position.set(0.15, 0.02, 0);
     group.add(skiR);
 
-    // Poles
     const poleGeo = new THREE.CylinderGeometry(0.015, 0.015, 1.2, 4);
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x44cc44, metalness: 0.4 });
     const poleL = new THREE.Mesh(poleGeo, poleMat);
     poleL.position.set(-0.35, 0.8, -0.1);
     poleL.rotation.x = 0.3;
     group.add(poleL);
-
     const poleR = new THREE.Mesh(poleGeo, poleMat);
     poleR.position.set(0.35, 0.8, -0.1);
     poleR.rotation.x = 0.3;
     group.add(poleR);
 
-    // Scale player to ~25% of screen height
-    group.scale.set(3, 3, 3);
-
     return group;
+  }
+
+  _setVisual(object3d, scale = 1.0) {
+    this.visualRoot.clear();
+    this.visualRoot.add(object3d);
+    this.visualRoot.scale.setScalar(scale);
+    this.skiTrackHalfWidth = 0.15 * scale;
+  }
+
+  async _loadPlayerModel() {
+    const loader = new GLTFLoader();
+    const gltf = await new Promise((resolve, reject) => {
+      loader.load(PLAYER_MODEL_PATH, resolve, undefined, reject);
+    });
+
+    const model = gltf.scene;
+    model.traverse((obj) => {
+      if (obj.isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+
+    this._setVisual(model, 1.35);
+    this._bindModelAnimations(model, gltf.animations || []);
+  }
+
+  _bindModelAnimations(model, clips) {
+    this.modelMixer = null;
+    this.modelActions = {};
+    this.modelActionWeights = {};
+    this.modelRig = this._extractRig(model);
+    this.modelRigBase.clear();
+
+    if (this.modelRig) {
+      Object.entries(this.modelRig).forEach(([key, bone]) => {
+        if (bone) this.modelRigBase.set(key, bone.quaternion.clone());
+      });
+    }
+
+    if (!clips.length) return;
+
+    this.modelMixer = new THREE.AnimationMixer(model);
+    clips.forEach((clip) => {
+      const action = this.modelMixer.clipAction(clip);
+      action.play();
+      action.enabled = true;
+      action.setEffectiveWeight(0);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      this.modelActions[clip.name.toLowerCase()] = action;
+      this.modelActionWeights[clip.name.toLowerCase()] = 0;
+    });
+  }
+
+  _extractRig(model) {
+    const bones = [];
+    model.traverse((obj) => {
+      if (obj.isBone) bones.push(obj);
+    });
+    if (!bones.length) return null;
+
+    const findBone = (patterns) => bones.find((bone) => patterns.some((p) => p.test(bone.name.toLowerCase())));
+    return {
+      spine: findBone([/spine/, /chest/]),
+      hip: findBone([/hip/, /pelvis/]),
+      armL: findBone([/leftarm/, /arm_l/, /upperarm.*l/, /l.*upperarm/]),
+      armR: findBone([/rightarm/, /arm_r/, /upperarm.*r/, /r.*upperarm/]),
+      forearmL: findBone([/leftforearm/, /forearm_l/, /lowerarm.*l/]),
+      forearmR: findBone([/rightforearm/, /forearm_r/, /lowerarm.*r/]),
+      thighL: findBone([/leftupleg/, /thigh_l/, /upleg.*l/]),
+      thighR: findBone([/rightupleg/, /thigh_r/, /upleg.*r/]),
+      footL: findBone([/leftfoot/, /foot_l/]),
+      footR: findBone([/rightfoot/, /foot_r/]),
+    };
   }
 
   _initTrails() {
@@ -142,7 +230,7 @@ export class Player {
   _updateTrails(gameTime) {
     // Only record trails when on ground and moving
     if (this.onGround && this.speed > 0.5 && !this.onLift) {
-      const skiOffsetLocal = 0.15 * 3; // ski offset * scale
+      const skiOffsetLocal = this.skiTrackHalfWidth;
       const sinH = Math.sin(this.heading);
       const cosH = Math.cos(this.heading);
       // Perpendicular to heading for left/right ski offset
@@ -262,6 +350,13 @@ export class Player {
         this.mesh.rotation.x = 0;
         this.mesh.rotation.z = 0;
       }
+
+      this._updateCharacterAnimation(deltaTime, {
+        turn: 0,
+        accelerating: false,
+        braking: false,
+        speedRatio: 0,
+      });
 
       this._updateTrails(gameTime || 0);
       return {
@@ -418,6 +513,13 @@ export class Player {
     )));
     this.mesh.rotation.x = slopeAngle * 0.5;
 
+    this._updateCharacterAnimation(deltaTime, {
+      turn: input.left ? 1 : (input.right ? -1 : 0),
+      accelerating: !!(input.skate && this.onGround),
+      braking: !!input.brake,
+      speedRatio: Math.min(1, this.speed / PLAYER_CONFIG.maxSpeed),
+    });
+
     // Update ski trails
     this._updateTrails(gameTime || 0);
 
@@ -429,6 +531,78 @@ export class Player {
       onGround: this.onGround,
       onLift: false,
     };
+  }
+
+  _updateCharacterAnimation(deltaTime, state) {
+    this.animTime += deltaTime;
+
+    if (this.modelMixer && Object.keys(this.modelActions).length) {
+      this._updateClipAnimation(deltaTime, state);
+      return;
+    }
+
+    if (this.modelRig) {
+      this._updateProceduralRigAnimation(state);
+    }
+  }
+
+  _updateClipAnimation(deltaTime, state) {
+    const targets = {};
+    const entries = Object.keys(this.modelActions);
+    entries.forEach((name) => { targets[name] = 0; });
+
+    const chooseByKeywords = (keywords) => entries.find((n) => keywords.some((k) => n.includes(k)));
+    const turnLeft = chooseByKeywords(['turn_left', 'left', 'carve_left']);
+    const turnRight = chooseByKeywords(['turn_right', 'right', 'carve_right']);
+    const push = chooseByKeywords(['speed', 'push', 'pole', 'skate', 'acceler']);
+    const brake = chooseByKeywords(['brake', 'slow', 'snowplow', 'wedge']);
+    const idle = chooseByKeywords(['idle', 'ski', 'base']) || entries[0];
+
+    targets[idle] = 0.35 + state.speedRatio * 0.65;
+    if (turnLeft && state.turn > 0) targets[turnLeft] = Math.abs(state.turn);
+    if (turnRight && state.turn < 0) targets[turnRight] = Math.abs(state.turn);
+    if (push && state.accelerating) targets[push] = 1.0;
+    if (brake && state.braking) targets[brake] = 1.0;
+
+    entries.forEach((name) => {
+      const action = this.modelActions[name];
+      const current = this.modelActionWeights[name] || 0;
+      const next = THREE.MathUtils.lerp(current, targets[name] || 0, Math.min(1, deltaTime * 8));
+      this.modelActionWeights[name] = next;
+      action.setEffectiveWeight(next);
+      action.setEffectiveTimeScale(0.8 + state.speedRatio * 0.8);
+    });
+
+    this.modelMixer.update(deltaTime);
+  }
+
+  _updateProceduralRigAnimation(state) {
+    const rig = this.modelRig;
+    if (!rig) return;
+
+    const polePunch = state.accelerating ? Math.sin(this.animTime * 14) * 0.8 : 0;
+    const sway = Math.sin(this.animTime * (2 + state.speedRatio * 5)) * 0.05;
+    const turn = state.turn;
+    const brake = state.braking ? 1 : 0;
+
+    this._applyBonePose('spine', new THREE.Euler(-0.1 - brake * 0.2, -turn * 0.2 + sway, turn * 0.15));
+    this._applyBonePose('armL', new THREE.Euler(0.35 + polePunch, 0.1, 0.35));
+    this._applyBonePose('armR', new THREE.Euler(0.35 - polePunch, -0.1, -0.35));
+    this._applyBonePose('forearmL', new THREE.Euler(-0.3 - polePunch * 0.5, 0, 0));
+    this._applyBonePose('forearmR', new THREE.Euler(-0.3 + polePunch * 0.5, 0, 0));
+    this._applyBonePose('thighL', new THREE.Euler(-0.05 + brake * 0.15, 0, 0.12 + turn * 0.25));
+    this._applyBonePose('thighR', new THREE.Euler(-0.05 + brake * 0.15, 0, -0.12 + turn * 0.25));
+    this._applyBonePose('footL', new THREE.Euler(brake * 0.25, 0, 0.1 + brake * 0.35 + turn * 0.15));
+    this._applyBonePose('footR', new THREE.Euler(brake * 0.25, 0, -0.1 - brake * 0.35 + turn * 0.15));
+  }
+
+  _applyBonePose(key, eulerOffset) {
+    const bone = this.modelRig?.[key];
+    const base = this.modelRigBase.get(key);
+    if (!bone || !base) return;
+
+    const target = base.clone().multiply(new THREE.Quaternion().setFromEuler(eulerOffset));
+    bone.quaternion.slerp(target, 0.16);
   }
 
   getSpeedKmh() {
