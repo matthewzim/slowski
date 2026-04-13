@@ -69,7 +69,7 @@ export class Player {
     this.animTime = 0;
 
     // Create placeholder, then load final skier model
-    this._setVisual(this._createFallbackVisual(), 3.0);
+    this._setVisual(this._createFallbackVisual(), 6.0);
     this._loadPlayerModel().catch((err) => {
       console.warn('Could not load skier GLB; using fallback stick figure.', err);
     });
@@ -151,8 +151,8 @@ export class Player {
       }
     });
 
-    // Slightly larger skier to better occupy the screen.
-    this._setVisual(model, 1.9);
+    // Significantly larger skier so they occupy much more of the screen.
+    this._setVisual(model, 3.8);
     this._bindModelAnimations(model, gltf.animations || []);
   }
 
