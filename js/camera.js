@@ -14,8 +14,6 @@ const CAM_CONFIG = {
   baseHeight: 4.2,
   // Look-ahead offset (how far ahead of player to look)
   lookAheadDist: 6,
-  // Smoothing factors (0-1, lower = smoother)
-  positionSmoothing: 0.04,
   lookSmoothing: 0.08,
   // Speed zoom (disabled - player stays same size on screen)
   speedZoomFactor: 0,
@@ -74,10 +72,10 @@ export class FollowCamera {
       this.initialized = true;
     } else {
       // Smooth follow with frame-rate independent lerp
-      const posFactor = 1 - Math.pow(1 - CAM_CONFIG.positionSmoothing, deltaTime * 60);
       const lookFactor = 1 - Math.pow(1 - CAM_CONFIG.lookSmoothing, deltaTime * 60);
 
-      this.currentPosition.lerp(idealPos, posFactor);
+      // Keep camera-to-player distance stable regardless of speed.
+      this.currentPosition.copy(idealPos);
       this.currentLookAt.lerp(idealLookAt, lookFactor);
     }
 
