@@ -45,6 +45,7 @@ export class Player {
     this.heading = Math.PI; // Face downhill initially
     this.onGround = true;
     this.turnDuration = 0; // Track how long player has been turning
+    this.visualTurn = 0;   // Smoothed visual turn state for animations
 
     // Input state
     this.input = { left: false, right: false, brake: false };
@@ -500,14 +501,27 @@ export class Player {
     this.position.x = Math.max(-halfW, Math.min(halfW, this.position.x));
     this.position.z = Math.max(-halfD, Math.min(halfD, this.position.z));
 
+    // -- Smooth visual turn for animations --
+    const targetTurn = input.left ? 1 : (input.right ? -1 : 0);
+    const turnLerpSpeed = targetTurn !== 0 ? 5.0 : 8.0;
+    this.visualTurn = THREE.MathUtils.lerp(this.visualTurn, targetTurn, Math.min(1, deltaTime * turnLerpSpeed));
+
     // -- Update mesh --
     this.mesh.position.copy(this.position);
     this.mesh.position.y += PLAYER_CONFIG.height * 0.1;
     this.mesh.rotation.y = this.heading;
 
-    // Lean into turns
-    const leanAngle = turnAmount * 0.15;
+    // Enhanced lean into turns — more pronounced body angulation
+    const speedFactor = Math.min(1, this.speed / 15);
+    const leanAngle = this.visualTurn * 0.35 * speedFactor;
     this.mesh.rotation.z = -leanAngle;
+
+    // Lateral body shift into the turn (weight transfer over the edges)
+    const shiftAmount = this.visualTurn * 0.4 * speedFactor;
+    const perpX = Math.cos(this.heading);
+    const perpZ = -Math.sin(this.heading);
+    this.mesh.position.x += perpX * shiftAmount;
+    this.mesh.position.z += perpZ * shiftAmount;
 
     // Tilt with slope
     const forward = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading));
@@ -517,7 +531,7 @@ export class Player {
     this.mesh.rotation.x = slopeAngle * 0.5;
 
     this._updateCharacterAnimation(deltaTime, {
-      turn: input.left ? 1 : (input.right ? -1 : 0),
+      turn: this.visualTurn,
       accelerating: !!(input.skate && this.onGround),
       braking: !!input.brake,
       speedRatio: Math.min(1, this.speed / PLAYER_CONFIG.maxSpeed),
@@ -586,17 +600,54 @@ export class Player {
     const polePunch = state.accelerating ? Math.sin(this.animTime * 14) * 0.8 : 0;
     const sway = Math.sin(this.animTime * (2 + state.speedRatio * 5)) * 0.05;
     const turn = state.turn;
+    const turnAbs = Math.abs(turn);
     const brake = state.braking ? 1 : 0;
 
-    this._applyBonePose('spine', new THREE.Euler(-0.1 - brake * 0.2, -turn * 0.2 + sway, turn * 0.15));
-    this._applyBonePose('armL', new THREE.Euler(0.35 + polePunch, 0.1, 0.35));
-    this._applyBonePose('armR', new THREE.Euler(0.35 - polePunch, -0.1, -0.35));
+    // Spine: lean into turn, rotate hips, forward tuck when carving
+    this._applyBonePose('spine', new THREE.Euler(
+      -0.1 - brake * 0.2 - turnAbs * 0.08,
+      -turn * 0.3 + sway,
+      turn * 0.2
+    ));
+
+    // Arms: widen for balance during turns
+    this._applyBonePose('armL', new THREE.Euler(
+      0.35 + polePunch + turnAbs * 0.15,
+      0.1 + turn * 0.15,
+      0.35 + turn * 0.1
+    ));
+    this._applyBonePose('armR', new THREE.Euler(
+      0.35 - polePunch + turnAbs * 0.15,
+      -0.1 + turn * 0.15,
+      -0.35 + turn * 0.1
+    ));
+
     this._applyBonePose('forearmL', new THREE.Euler(-0.3 - polePunch * 0.5, 0, 0));
     this._applyBonePose('forearmR', new THREE.Euler(-0.3 + polePunch * 0.5, 0, 0));
-    this._applyBonePose('thighL', new THREE.Euler(-0.05 + brake * 0.15, 0, 0.12 + turn * 0.25));
-    this._applyBonePose('thighR', new THREE.Euler(-0.05 + brake * 0.15, 0, -0.12 + turn * 0.25));
-    this._applyBonePose('footL', new THREE.Euler(brake * 0.25, 0, 0.1 + brake * 0.35 + turn * 0.15));
-    this._applyBonePose('footR', new THREE.Euler(brake * 0.25, 0, -0.1 - brake * 0.35 + turn * 0.15));
+
+    // Thighs: inside leg bends more, outside leg extends for edging
+    this._applyBonePose('thighL', new THREE.Euler(
+      -0.05 + brake * 0.15 + (turn > 0 ? turn * 0.2 : 0),
+      0,
+      0.12 + turn * 0.3
+    ));
+    this._applyBonePose('thighR', new THREE.Euler(
+      -0.05 + brake * 0.15 + (turn < 0 ? -turn * 0.2 : 0),
+      0,
+      -0.12 + turn * 0.3
+    ));
+
+    // Feet / skis: both skis edge in the same direction during a carved turn
+    this._applyBonePose('footL', new THREE.Euler(
+      brake * 0.25,
+      turn * 0.12,
+      0.1 + brake * 0.35 + turn * 0.25
+    ));
+    this._applyBonePose('footR', new THREE.Euler(
+      brake * 0.25,
+      turn * 0.12,
+      -0.1 - brake * 0.35 + turn * 0.25
+    ));
   }
 
   _applyBonePose(key, eulerOffset) {
