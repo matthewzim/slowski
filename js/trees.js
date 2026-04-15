@@ -1,222 +1,265 @@
 /**
  * Tree Placement System for Jamboree Snow Resort
- * Uses instanced meshes for performance. Places trees based on elevation,
- * slope, and position matching the trail map - dense forests on lower portions
- * and sides, thinning toward treeline, alpine above.
+ * Loads GLB tree models and places them in natural-looking clusters.
+ * Snowy pines on middle/upper mountain, normal pines on lower third.
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getHeightAt, getSlopeAt, TERRAIN_CONFIG } from './terrain.js';
 import { isOnRun } from './runs.js';
 
+const NORMAL_PINE_PATH = 'pine+tree+3d+model.glb';
+const SNOWY_PINE_PATH = 'snowy+pine+tree+3d+model.glb';
+
 const TREE_CONFIG = {
-  maxTrees: 20000,
-  minElevation: 650,
-  maxElevation: 1950,
-  treeline: 1800,
-  maxSlope: 0.85,
-  minSpacing: 38,
-  runBuffer: 50,
+  targetHeight: 40,          // Base height in world units
+  heightVariation: 0.35,     // ±35% random size variation
+  minSpacing: 25,            // Minimum distance between trees in a cluster
+  maxSlope: 0.8,             // Max slope angle (radians) for placement
+  maxElevation: 1950,        // Absolute elevation cap (treeline)
+  minElevation: 650,         // Absolute elevation floor
+  lowerThirdCeiling: 1300,   // Normal pines go up to here
+  middleFloor: 1050,         // Snowy pines start from here
 };
+
+// ── Snowy pine clusters: middle and upper mountain ──────────────────
+const SNOWY_CLUSTERS = [
+  // Mid-mountain west side — dense forest patches
+  { nx: 0.16, ny: 0.42, radius: 160, count: 35 },
+  { nx: 0.13, ny: 0.52, radius: 140, count: 28 },
+  // Mid-mountain center
+  { nx: 0.30, ny: 0.46, radius: 170, count: 32 },
+  { nx: 0.48, ny: 0.43, radius: 155, count: 30 },
+  // Mid-mountain east
+  { nx: 0.63, ny: 0.40, radius: 165, count: 32 },
+  { nx: 0.73, ny: 0.46, radius: 145, count: 26 },
+  // Upper mountain groves
+  { nx: 0.25, ny: 0.60, radius: 130, count: 22 },
+  { nx: 0.40, ny: 0.56, radius: 145, count: 25 },
+  { nx: 0.56, ny: 0.54, radius: 140, count: 24 },
+  { nx: 0.36, ny: 0.68, radius: 120, count: 18 },
+  { nx: 0.50, ny: 0.64, radius: 125, count: 20 },
+  { nx: 0.64, ny: 0.58, radius: 115, count: 16 },
+  // Near treeline — sparse clusters
+  { nx: 0.33, ny: 0.75, radius: 100, count: 10 },
+  { nx: 0.48, ny: 0.72, radius: 110, count: 12 },
+];
+
+// ── Normal pine clusters: lower third of mountain ───────────────────
+const NORMAL_CLUSTERS = [
+  // Near base village
+  { nx: 0.14, ny: 0.14, radius: 170, count: 35 },
+  { nx: 0.28, ny: 0.11, radius: 180, count: 32 },
+  // Lower west slopes
+  { nx: 0.10, ny: 0.26, radius: 155, count: 28 },
+  { nx: 0.22, ny: 0.22, radius: 160, count: 30 },
+  // Lower center
+  { nx: 0.40, ny: 0.15, radius: 165, count: 30 },
+  { nx: 0.50, ny: 0.20, radius: 150, count: 26 },
+  // Lower east
+  { nx: 0.60, ny: 0.14, radius: 175, count: 32 },
+  { nx: 0.73, ny: 0.22, radius: 160, count: 28 },
+  { nx: 0.82, ny: 0.30, radius: 140, count: 22 },
+  // Flanks
+  { nx: 0.08, ny: 0.35, radius: 130, count: 20 },
+  // Mid-lower transitional
+  { nx: 0.33, ny: 0.28, radius: 145, count: 24 },
+  { nx: 0.55, ny: 0.26, radius: 150, count: 25 },
+];
+
+// ── Helpers ─────────────────────────────────────────────────────────
 
 function seededRandom(seed) {
   let s = seed;
-  return function() {
+  return function () {
     s = (s * 16807 + 0) % 2147483647;
     return s / 2147483647;
   };
 }
 
 /**
- * Check if position is in a heavy-forest zone based on the Jamboree map.
- * The map shows dense forests on the lower sides and bottom portions.
+ * Load a GLB tree model, extract its meshes, and normalize them so the
+ * whole model is 1 unit tall with its base at y = 0, centred on x/z.
+ * Returns an array of { geometry, material } ready for InstancedMesh.
  */
-function getForestDensity(nx, ny, elevation) {
-  let density = 1.0;
+async function loadTreeModelMeshes(path) {
+  const loader = new GLTFLoader();
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load(path, resolve, undefined, reject);
+  });
 
-  // Dense forest in lower-left (lift 5 area)
-  const distLL = Math.sqrt(Math.pow(nx - 0.15, 2) + Math.pow(ny - 0.45, 2));
-  if (distLL < 0.20) density *= 1.5;
+  const model = gltf.scene;
+  model.updateWorldMatrix(true, true);
 
-  // Dense forest in lower-right (lift 3 area)
-  const distLR = Math.sqrt(Math.pow(nx - 0.78, 2) + Math.pow(ny - 0.22, 2));
-  if (distLR < 0.18) density *= 1.4;
+  // Overall bounding box of the loaded model
+  const bbox = new THREE.Box3().setFromObject(model);
+  const modelHeight = Math.max(bbox.max.y - bbox.min.y, 0.01);
+  const centerX = (bbox.min.x + bbox.max.x) / 2;
+  const centerZ = (bbox.min.z + bbox.max.z) / 2;
+  const baseY = bbox.min.y;
+  const invH = 1 / modelHeight;
 
-  // Dense forest flanking the main runs (lower mountain)
-  if (ny < 0.35 && ny > 0.10) {
-    if (nx < 0.38 || nx > 0.58) density *= 1.3;
-  }
+  const meshDataList = [];
 
-  // Forest on left side of mountain
-  if (nx < 0.25 && ny > 0.30 && ny < 0.60) density *= 1.4;
+  model.traverse((child) => {
+    if (!child.isMesh) return;
 
-  // Forest on right side of mountain
-  if (nx > 0.65 && ny > 0.25 && ny < 0.50) density *= 1.3;
+    const geo = child.geometry.clone();
+    // Bake the mesh's full world transform into the vertices
+    geo.applyMatrix4(child.matrixWorld);
+    // Centre on x/z, base at y = 0
+    geo.translate(-centerX, -baseY, -centerZ);
+    // Normalise to unit height
+    geo.scale(invH, invH, invH);
 
-  // Less forest in base village area
-  const distVillage = Math.sqrt(Math.pow(nx - 0.48, 2) + Math.pow(ny - 0.10, 2));
-  if (distVillage < 0.08) density *= 0.15;
+    meshDataList.push({
+      geometry: geo,
+      material: child.material.clone(),
+    });
+  });
 
-  // Less forest in alpine zones (center-top of mountain)
-  if (ny > 0.65 && nx > 0.30 && nx < 0.65) {
-    density *= 0.3;
-  }
-
-  // Thin out near treeline
-  if (elevation > TREE_CONFIG.treeline) {
-    density *= 1.0 - (elevation - TREE_CONFIG.treeline) / (TREE_CONFIG.maxElevation - TREE_CONFIG.treeline);
-    density = Math.max(0, density);
-  }
-
-  // No trees above treeline
-  if (elevation > TREE_CONFIG.maxElevation) density = 0;
-
-  // Lower density at very low elevations (flats near village)
-  if (elevation < 730) density *= 0.2;
-
-  return density;
+  return meshDataList;
 }
 
-function generateTreePositions(heightmap, resolution) {
-  const positions = [];
-  const rand = seededRandom(42);
-  const halfW = TERRAIN_CONFIG.worldWidth / 2;
-  const halfD = TERRAIN_CONFIG.worldDepth / 2;
+/**
+ * Generate tree positions within the given cluster definitions.
+ * Each position is checked against elevation, slope, and ski-run constraints.
+ */
+function generateClusterPositions(clusters, heightmap, resolution, elevMin, elevMax, rand) {
+  const allPositions = [];
 
-  const cellSize = TREE_CONFIG.minSpacing;
-  const gridW = Math.floor(TERRAIN_CONFIG.worldWidth / cellSize);
-  const gridD = Math.floor(TERRAIN_CONFIG.worldDepth / cellSize);
+  for (const cluster of clusters) {
+    const cx = (cluster.nx - 0.5) * TERRAIN_CONFIG.worldWidth;
+    const cz = (cluster.ny - 0.5) * TERRAIN_CONFIG.worldDepth;
+    const clusterPositions = [];
+    let placed = 0;
+    let attempts = 0;
+    const maxAttempts = cluster.count * 8;
 
-  for (let gz = 0; gz < gridD; gz++) {
-    for (let gx = 0; gx < gridW; gx++) {
-      if (positions.length >= TREE_CONFIG.maxTrees) break;
+    while (placed < cluster.count && attempts < maxAttempts) {
+      attempts++;
 
-      const x = (gx + rand()) * cellSize - halfW;
-      const z = (gz + rand()) * cellSize - halfD;
+      // Random position within cluster radius (sqrt for uniform circle area)
+      const angle = rand() * Math.PI * 2;
+      const dist = cluster.radius * Math.sqrt(rand()) * 0.85;
+      const x = cx + Math.cos(angle) * dist;
+      const z = cz + Math.sin(angle) * dist;
 
-      // Skip if on a run
+      // World bounds check
+      const halfW = TERRAIN_CONFIG.worldWidth / 2 - 50;
+      const halfD = TERRAIN_CONFIG.worldDepth / 2 - 50;
+      if (Math.abs(x) > halfW || Math.abs(z) > halfD) continue;
+
+      // Skip ski runs
       if (isOnRun(x, z)) continue;
 
-      const elevation = getHeightAt(x, z, heightmap, resolution) + TERRAIN_CONFIG.baseElevation;
-      const slope = getSlopeAt(x, z, heightmap, resolution);
+      const height = getHeightAt(x, z, heightmap, resolution);
+      if (height < 1) continue; // no terrain
 
-      if (elevation < TREE_CONFIG.minElevation || elevation > TREE_CONFIG.maxElevation) continue;
+      const elevation = height + TERRAIN_CONFIG.baseElevation;
+      if (elevation < elevMin || elevation > elevMax) continue;
+
+      const slope = getSlopeAt(x, z, heightmap, resolution);
       if (slope > TREE_CONFIG.maxSlope) continue;
 
-      // Get normalized position for forest density lookup
-      const nx = x / TERRAIN_CONFIG.worldWidth + 0.5;
-      const ny = z / TERRAIN_CONFIG.worldDepth + 0.5;
-      const density = getForestDensity(nx, ny, elevation);
+      // Minimum spacing within this cluster
+      let tooClose = false;
+      for (const p of clusterPositions) {
+        const dx = x - p.x;
+        const dz = z - p.z;
+        if (dx * dx + dz * dz < TREE_CONFIG.minSpacing * TREE_CONFIG.minSpacing) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
 
-      // Use noise for natural clustering
-      const noiseVal = rand();
-      if (noiseVal > density * 0.4) continue;
+      const scale = 1.0 + (rand() - 0.5) * TREE_CONFIG.heightVariation * 2;
+      const rotation = rand() * Math.PI * 2;
 
-      // Tree scale varies with elevation
-      const baseScale = 0.6 + rand() * 0.6;
-      const elevFactor = elevation > 1600 ? 0.6 + 0.4 * (1 - (elevation - 1600) / 400) : 1.0;
-      const scale = baseScale * elevFactor;
-
-      const y = getHeightAt(x, z, heightmap, resolution);
-
-      positions.push({
-        x, y, z,
-        scale,
-        rotation: rand() * Math.PI * 2,
-      });
+      const pos = { x, y: height, z, scale, rotation };
+      clusterPositions.push(pos);
+      allPositions.push(pos);
+      placed++;
     }
-    if (positions.length >= TREE_CONFIG.maxTrees) break;
   }
 
-  return positions;
+  return allPositions;
 }
 
-export function generateTrees(heightmap, resolution) {
-  const positions = generateTreePositions(heightmap, resolution);
-  const count = positions.length;
-
-  if (count === 0) {
-    return new THREE.Group();
-  }
-
-  const trunkGeo = new THREE.CylinderGeometry(0.75, 1.25, 10, 5);
-  const trunkMat = new THREE.MeshStandardMaterial({
-    color: 0x4a3520,
-    roughness: 0.9,
-  });
-
-  const foliageMat = new THREE.MeshStandardMaterial({
-    color: 0x1a5a2a,
-    roughness: 0.8,
-  });
-
-  const cone1Geo = new THREE.ConeGeometry(11.0, 17.5, 6);
-  const cone2Geo = new THREE.ConeGeometry(8.5, 15.0, 6);
-  const cone3Geo = new THREE.ConeGeometry(5.5, 12.5, 6);
-
-  const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
-  const cone1Mesh = new THREE.InstancedMesh(cone1Geo, foliageMat, count);
-  const cone2Mesh = new THREE.InstancedMesh(cone2Geo, foliageMat, count);
-  const cone3Mesh = new THREE.InstancedMesh(cone3Geo, foliageMat, count);
-
-  trunkMesh.castShadow = true;
-  cone1Mesh.castShadow = true;
-  cone2Mesh.castShadow = true;
-  cone3Mesh.castShadow = true;
-  trunkMesh.receiveShadow = true;
-  cone1Mesh.receiveShadow = true;
+/**
+ * Build a Three.js Group of InstancedMesh objects from pre-normalised
+ * mesh data and an array of world-space positions.
+ */
+function createInstancedTreeGroup(meshDataList, positions, targetHeight) {
+  const group = new THREE.Group();
+  if (positions.length === 0 || meshDataList.length === 0) return group;
 
   const matrix = new THREE.Matrix4();
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
   const euler = new THREE.Euler();
-  const color = new THREE.Color();
 
-  for (let i = 0; i < count; i++) {
-    const tree = positions[i];
-    euler.set(0, tree.rotation, 0);
-    quaternion.setFromEuler(euler);
-    const s = tree.scale;
+  for (const { geometry, material } of meshDataList) {
+    const instMesh = new THREE.InstancedMesh(geometry, material, positions.length);
+    instMesh.castShadow = true;
+    instMesh.receiveShadow = true;
 
-    position.set(tree.x, tree.y + 5 * s, tree.z);
-    scale.set(s, s, s);
-    matrix.compose(position, quaternion, scale);
-    trunkMesh.setMatrixAt(i, matrix);
+    for (let i = 0; i < positions.length; i++) {
+      const tree = positions[i];
+      pos.set(tree.x, tree.y, tree.z);
+      euler.set(0, tree.rotation, 0);
+      quat.setFromEuler(euler);
+      const s = tree.scale * targetHeight;
+      scl.set(s, s, s);
+      matrix.compose(pos, quat, scl);
+      instMesh.setMatrixAt(i, matrix);
+    }
 
-    position.set(tree.x, tree.y + 17.5 * s, tree.z);
-    matrix.compose(position, quaternion, scale);
-    cone1Mesh.setMatrixAt(i, matrix);
-
-    position.set(tree.x, tree.y + 27.5 * s, tree.z);
-    matrix.compose(position, quaternion, scale);
-    cone2Mesh.setMatrixAt(i, matrix);
-
-    position.set(tree.x, tree.y + 36.0 * s, tree.z);
-    matrix.compose(position, quaternion, scale);
-    cone3Mesh.setMatrixAt(i, matrix);
-
-    const hue = 0.33 + (Math.random() - 0.5) * 0.05;
-    const sat = 0.5 + Math.random() * 0.3;
-    const lit = 0.15 + Math.random() * 0.1;
-    color.setHSL(hue, sat, lit);
-    cone1Mesh.setColorAt(i, color);
-    cone2Mesh.setColorAt(i, color);
-    cone3Mesh.setColorAt(i, color);
+    instMesh.instanceMatrix.needsUpdate = true;
+    group.add(instMesh);
   }
 
-  trunkMesh.instanceMatrix.needsUpdate = true;
-  cone1Mesh.instanceMatrix.needsUpdate = true;
-  cone2Mesh.instanceMatrix.needsUpdate = true;
-  cone3Mesh.instanceMatrix.needsUpdate = true;
+  return group;
+}
 
-  if (cone1Mesh.instanceColor) cone1Mesh.instanceColor.needsUpdate = true;
-  if (cone2Mesh.instanceColor) cone2Mesh.instanceColor.needsUpdate = true;
-  if (cone3Mesh.instanceColor) cone3Mesh.instanceColor.needsUpdate = true;
+// ── Public API ──────────────────────────────────────────────────────
 
+export async function generateTrees(heightmap, resolution) {
   const group = new THREE.Group();
   group.name = 'Trees';
-  group.add(trunkMesh, cone1Mesh, cone2Mesh, cone3Mesh);
+
+  const rand = seededRandom(42);
+
+  // Load both GLB tree models in parallel
+  const [snowyMeshes, normalMeshes] = await Promise.all([
+    loadTreeModelMeshes(SNOWY_PINE_PATH),
+    loadTreeModelMeshes(NORMAL_PINE_PATH),
+  ]);
+
+  // Generate clustered positions for each tree type
+  const snowyPositions = generateClusterPositions(
+    SNOWY_CLUSTERS, heightmap, resolution,
+    TREE_CONFIG.middleFloor, TREE_CONFIG.maxElevation, rand,
+  );
+
+  const normalPositions = generateClusterPositions(
+    NORMAL_CLUSTERS, heightmap, resolution,
+    TREE_CONFIG.minElevation, TREE_CONFIG.lowerThirdCeiling, rand,
+  );
+
+  // Build instanced mesh groups
+  const snowyGroup = createInstancedTreeGroup(snowyMeshes, snowyPositions, TREE_CONFIG.targetHeight);
+  snowyGroup.name = 'SnowyPines';
+  group.add(snowyGroup);
+
+  const normalGroup = createInstancedTreeGroup(normalMeshes, normalPositions, TREE_CONFIG.targetHeight);
+  normalGroup.name = 'NormalPines';
+  group.add(normalGroup);
+
+  console.log(`Trees placed — ${snowyPositions.length} snowy pines, ${normalPositions.length} normal pines`);
 
   return group;
 }

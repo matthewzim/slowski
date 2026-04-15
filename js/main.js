@@ -17,6 +17,7 @@ import { createSnowMaterial, createSnowParticles, updateSnowParticles, createSpr
 import { isOnRun, createRunVisuals } from './runs.js';
 import { Player } from './player.js';
 import { FollowCamera } from './camera.js';
+import { generateTrees } from './trees.js';
 import { loadFromDat } from './dat/loader.js';
 import { scaleToWorld } from './dat/converter.js';
 
@@ -525,7 +526,13 @@ async function init() {
   const cliffs = createCliffFeatures(heightmap, resolution);
   scene.add(cliffs);
 
-  setLoadProgress(92, 'Setting up player...');
+  setLoadProgress(91, 'Loading and placing trees...');
+  await nextFrame();
+
+  const trees = await generateTrees(heightmap, resolution);
+  scene.add(trees);
+
+  setLoadProgress(94, 'Setting up player...');
   await nextFrame();
 
   player = new Player(heightmap, resolution);
