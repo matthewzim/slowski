@@ -206,6 +206,7 @@ function createInstancedTreeGroup(meshDataList, positions, targetHeight) {
     const instMesh = new THREE.InstancedMesh(geometry, material, positions.length);
     instMesh.castShadow = true;
     instMesh.receiveShadow = true;
+    instMesh.frustumCulled = false;
 
     for (let i = 0; i < positions.length; i++) {
       const tree = positions[i];
