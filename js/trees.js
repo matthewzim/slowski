@@ -123,6 +123,35 @@ async function loadTreeModelMeshes(path) {
 }
 
 /**
+ * Scan the heightmap to find the actual min/max elevation of the terrain.
+ * Returns { min, max } in heightmap elevation units.
+ */
+function getActualElevationRange(heightmap) {
+  let min = Infinity, max = -Infinity;
+  const threshold = TERRAIN_CONFIG.minElevation + 1;
+  for (let i = 0; i < heightmap.length; i++) {
+    const h = heightmap[i];
+    if (h > threshold) {
+      if (h < min) min = h;
+      if (h > max) max = h;
+    }
+  }
+  return { min, max };
+}
+
+/**
+ * Map a configured elevation threshold to the actual terrain elevation range.
+ * The TREE_CONFIG values assume TERRAIN_CONFIG.minElevation–maxElevation,
+ * but the loaded terrain may have a very different vertical extent.
+ */
+function mapElevation(configElev, actualRange) {
+  const cfgMin = TERRAIN_CONFIG.minElevation;
+  const cfgSpan = TERRAIN_CONFIG.maxElevation - cfgMin;
+  const fraction = (configElev - cfgMin) / cfgSpan;
+  return actualRange.min + fraction * (actualRange.max - actualRange.min);
+}
+
+/**
  * Generate tree positions within the given cluster definitions.
  * Each position is checked against elevation, slope, and ski-run constraints.
  */
@@ -240,15 +269,30 @@ export async function generateTrees(heightmap, resolution) {
     loadTreeModelMeshes(NORMAL_PINE_PATH),
   ]);
 
+  // Compute actual terrain elevation range and map tree thresholds to it.
+  // The TREE_CONFIG thresholds assume TERRAIN_CONFIG.min–maxElevation (e.g.
+  // 630–2470 for Whistler), but after uniform scaling the terrain model may
+  // have a much larger vertical extent.  Map proportionally so that trees
+  // appear at the correct relative positions on the mountain.
+  const actualRange = getActualElevationRange(heightmap);
+  const effMiddleFloor    = mapElevation(TREE_CONFIG.middleFloor, actualRange);
+  const effMaxElevation   = mapElevation(TREE_CONFIG.maxElevation, actualRange);
+  const effMinElevation   = mapElevation(TREE_CONFIG.minElevation, actualRange);
+  const effLowerCeiling   = mapElevation(TREE_CONFIG.lowerThirdCeiling, actualRange);
+
+  console.log(`Tree elevation mapping — actual range: ${Math.round(actualRange.min)}–${Math.round(actualRange.max)}, `
+    + `snowy: ${Math.round(effMiddleFloor)}–${Math.round(effMaxElevation)}, `
+    + `normal: ${Math.round(effMinElevation)}–${Math.round(effLowerCeiling)}`);
+
   // Generate clustered positions for each tree type
   const snowyPositions = generateClusterPositions(
     SNOWY_CLUSTERS, heightmap, resolution,
-    TREE_CONFIG.middleFloor, TREE_CONFIG.maxElevation, rand,
+    effMiddleFloor, effMaxElevation, rand,
   );
 
   const normalPositions = generateClusterPositions(
     NORMAL_CLUSTERS, heightmap, resolution,
-    TREE_CONFIG.minElevation, TREE_CONFIG.lowerThirdCeiling, rand,
+    effMinElevation, effLowerCeiling, rand,
   );
 
   // Build instanced mesh groups
